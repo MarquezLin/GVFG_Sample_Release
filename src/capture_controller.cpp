@@ -302,18 +302,23 @@ void CaptureController::closeDeviceSession(bool clearSelection)
         appendLog(QStringLiteral("Closed device"));
     }
 
-    emit statusChanged(QStringLiteral("Idle"));
-    lastSignalStatusText_.clear();
-    emit sdiInfoChanged(QStringLiteral("SDI Info: --"));
     if (clearSelection)
+    {
+        emit statusChanged(QStringLiteral("Idle"));
+        lastSignalStatusText_.clear();
+        emit sdiInfoChanged(QStringLiteral("SDI Info: --"));
         selectedDeviceIndex_ = -1;
+    }
     for (ChannelRuntime &channel : channels_)
     {
         channel.opened = false;
-        channel.cachedSignalStatus = {};
-        channel.haveCachedSignalStatus = false;
-        channel.cachedSdiInfoText.clear();
-        channel.lastLoggedInputStatus.clear();
+        if (clearSelection)
+        {
+            channel.cachedSignalStatus = {};
+            channel.haveCachedSignalStatus = false;
+            channel.cachedSdiInfoText.clear();
+            channel.lastLoggedInputStatus.clear();
+        }
     }
     closingDevice_ = false;
     emit stateChanged();
@@ -365,6 +370,11 @@ void CaptureController::startCapture(int channelIndex)
     if (st != GVFG_OK)
     {
         reportError(QStringLiteral("gvfg_start_channel"), st, channelIndex);
+        if (st == GVFG_ETIMEOUT)
+        {
+            updateSignalStatus();
+            refreshSdiInfo(channelIndex);
+        }
         emit previewCloseRequested(channelIndex);
         emit stateChanged();
         closeDeviceIfIdle();
@@ -464,6 +474,7 @@ void CaptureController::stopCapture(int channelIndex)
         gvfg_stop_channel(handle_, channelIndex);
         channel.running.store(false, std::memory_order_release);
         channel.frameAvailable.store(false, std::memory_order_release);
+        updateSignalStatus(false);
         channel.audioEnabled = false;
         emit previewCloseRequested(channelIndex);
         appendLog(QStringLiteral("CH%1 Stopped capture").arg(channelIndex));
