@@ -1,0 +1,14 @@
+/build*/
+/.qtcreator/
+/.vs/
+/out/
+/logs/
+
+CMakeUserPresets.json
+CMakeCache.txt
+cmake_install.cmake
+*.user
+*.pdb
+*.obj
+*.ilk
+*.log
