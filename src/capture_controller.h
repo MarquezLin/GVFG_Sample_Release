@@ -1,5 +1,7 @@
 #pragma once
 
+#include "audio_playback.h"
+
 #include <gvfg_capture.h>
 #include <gvfg_preview.h>
 
@@ -9,10 +11,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
-#include <deque>
-#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -60,14 +59,15 @@ signals:
     void previewCloseRequested(int channel);
 
 private:
+    static bool isValidChannel(int channel);
     bool openDevice();
     bool applyOutputFormat(int channel);
+    bool prepareAudio(int channel);
     void closeDeviceSession(bool clearSelection);
     void closeDeviceIfIdle();
 
     struct ChannelRuntime
     {
-        struct AudioPacket { std::vector<uint8_t> pcm; };
         bool opened = false;
         bool zeroCopy = false;
         bool requestedAudio = false;
@@ -76,14 +76,10 @@ private:
         gvfg_preview_handle previewHandle = nullptr;
         std::atomic<bool> running{false}, stopRequested{false};
         std::atomic<bool> frameAvailable{false}, previewVisible{false}, captureThreadExited{true};
-        std::thread captureThread, audioThread, audioPlaybackThread;
-        std::mutex audioQueueMutex;
-        std::condition_variable audioQueueReady;
-        std::deque<AudioPacket> audioQueue;
+        std::thread captureThread, audioThread;
+        AudioPlayback audioPlayback;
         bool audioEnabled = false;
         gvfg_audio_format_t audioFormat{};
-        uint64_t audioReceivedFrames = 0;
-        uint64_t audioReleaseFailedFrames = 0, audioOutputFailedFrames = 0;
         std::atomic<uint64_t> videoFailed{0};
         gvfg_preview_delivery_stats_t previewBaseline{};
         uint64_t lastLoggedPreviewFailures = 0;
@@ -98,11 +94,11 @@ private:
 
     void reportError(const QString &apiName, gvfg_status_t status, int channel = -1);
     void appendLog(const QString &message);
+    void postLog(const QString &message);
     bool openChannel(int channel);
     void refreshSdiInfo(int channel);
     void captureReadLoop(int channel);
     void audioReadLoop(int channel);
-    void audioPlaybackLoop(int channel);
     void joinCaptureThread(int channel);
     void joinAudioThread(int channel);
     void logDeliveryStatus(int channel, bool finalSnapshot = false);

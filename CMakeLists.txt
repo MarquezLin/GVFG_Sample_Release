@@ -51,8 +51,11 @@ set_target_properties(GVFG::Preview PROPERTIES
 
 qt_add_executable(gvfg_qt_preview WIN32
   src/main.cpp
+  src/audio_playback.cpp
+  src/audio_playback.h
   src/capture_controller.cpp
   src/capture_controller.h
+  src/capture_controller_status.cpp
   src/sample_log.cpp
   src/sample_log.h
   src/mainwindow.cpp
