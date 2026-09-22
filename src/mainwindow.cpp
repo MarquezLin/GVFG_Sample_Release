@@ -5,7 +5,6 @@
 #include "ui_mainwindow.h"
 
 #include <QCloseEvent>
-#include <QStandardItemModel>
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
 
@@ -103,7 +102,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(ui_->ch1FullscreenButton, &QPushButton::clicked, this, [this] { showPreviewWindow(1, true); });
 
     auto formatChanged = [this](int channel) {
-        updateOutputFormatOptions(channel);
+        updateOutputFormatOptions();
         syncControllerOptions(channel);
     };
     connect(ui_->ch0OutputFormatCombo, &QComboBox::currentIndexChanged, this, [formatChanged](int) { formatChanged(0); });
@@ -180,24 +179,13 @@ void MainWindow::showPreviewWindow(int channel, bool fullscreen)
                 : QStringLiteral("CH%1 [APP] Show preview failed | window update").arg(channel));
 }
 
-void MainWindow::updateOutputFormatOptions(int changedChannel)
+void MainWindow::updateOutputFormatOptions()
 {
     QComboBox *combos[] = {ui_->ch0OutputFormatCombo, ui_->ch1OutputFormatCombo};
-    constexpr int y210 = 1;
-    if ((changedChannel == 0 || changedChannel == 1) && combos[changedChannel]->currentIndex() == y210)
-    {
-        const int other = changedChannel == 0 ? 1 : 0;
-        if (combos[other]->currentIndex() == y210) combos[other]->setCurrentIndex(0);
-    }
-    const bool enabled[] = {combos[1]->currentIndex() != y210, combos[0]->currentIndex() != y210};
     for (int channel = 0; channel < 2; ++channel)
     {
-        auto *model = qobject_cast<QStandardItemModel *>(combos[channel]->model());
-        if (model && model->item(y210)) model->item(y210)->setEnabled(enabled[channel]);
         combos[channel]->setToolTip(
-            enabled[channel]
-                ? QStringLiteral("Requested CH%1 capture output format").arg(channel)
-                : QStringLiteral("Y210 is already selected by the other channel"));
+            QStringLiteral("Requested CH%1 capture output format").arg(channel));
     }
 }
 

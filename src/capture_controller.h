@@ -74,9 +74,7 @@ private:
         gvfg_pixel_format_t requestedFormat = GVFG_PIXFMT_YUY2;
         void *previewTarget = nullptr;
         gvfg_preview_handle previewHandle = nullptr;
-        std::atomic<bool> running{false}, stopRequested{false}, signalConnected{false};
-        std::mutex signalMutex;
-        std::condition_variable signalReady;
+        std::atomic<bool> running{false}, stopRequested{false};
         std::atomic<bool> frameAvailable{false}, previewVisible{false}, captureThreadExited{true};
         std::thread captureThread, audioThread, audioPlaybackThread;
         std::mutex audioQueueMutex;

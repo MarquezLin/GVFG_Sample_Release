@@ -28,7 +28,7 @@ protected:
 private:
     void syncControllerOptions(int channel);
     void showPreviewWindow(int channel, bool fullscreen);
-    void updateOutputFormatOptions(int changedChannel = -1);
+    void updateOutputFormatOptions();
     void updateUiState();
     void appendLogLine(const QString &line);
 

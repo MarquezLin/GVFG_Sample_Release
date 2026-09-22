@@ -336,10 +336,6 @@ void CaptureController::startCapture(int channelIndex)
         return;
     }
 
-    // Consume queued events, then let gvfg_start_channel perform the single
-    // fresh signal query used to accept or reject this explicit Start.
-    processPendingEvents();
-
     const bool audioEnabled = channel.requestedAudio;
     channel.audioFormat = {};
     if (audioEnabled)
@@ -381,44 +377,28 @@ void CaptureController::startCapture(int channelIndex)
         return;
     }
 
-    // While the SDK channel is running this returns the signal state cached by
-    // gvfg_start_channel performs the final signal validation before streaming.
     updateSignalStatus();
     refreshSdiInfo(channelIndex);
-    if (!channel.haveCachedSignalStatus || !channel.cachedSignalStatus.connected)
-    {
-        appendLog(QStringLiteral("CH%1 [SDK] Started without cached signal state; stopping")
-                      .arg(channelIndex));
-        closeDeviceIfIdle();
-        return;
-    }
 
     channel.frameAvailable.store(false, std::memory_order_release);
-    emit previewSourceSizeChanged(channelIndex, channel.cachedSignalStatus.width,
-                                  channel.cachedSignalStatus.height);
+    if (channel.haveCachedSignalStatus &&
+        channel.cachedSignalStatus.width > 0 && channel.cachedSignalStatus.height > 0)
+    {
+        emit previewSourceSizeChanged(channelIndex,
+                                      channel.cachedSignalStatus.width,
+                                      channel.cachedSignalStatus.height);
+    }
     emit previewShowRequested(channelIndex);
     if (!applyPreview(channelIndex))
     {
+        const gvfg_status_t stopStatus = gvfg_stop_channel(handle_, channelIndex);
+        if (stopStatus != GVFG_OK)
+            reportError(QStringLiteral("gvfg_stop_channel"), stopStatus, channelIndex);
         emit previewCloseRequested(channelIndex);
         closeDeviceIfIdle();
         return;
     }
 
-    if (gvfg_preview_prepare(channel.previewHandle,
-                             channel.cachedSignalStatus.width,
-                             channel.cachedSignalStatus.height,
-                             channel.cachedSignalStatus.bit_depth) != GVFG_PREVIEW_OK)
-    {
-        appendLog(QStringLiteral("CH%1 [APP] Preview prewarm failed").arg(channelIndex));
-    }
-
-    if (gvfg_preview_wait_idle(channel.previewHandle, 2000) != GVFG_PREVIEW_OK)
-    {
-        appendLog(QStringLiteral("CH%1 [APP] WARNING preview busy from previous run; start skipped").arg(channelIndex));
-        emit previewCloseRequested(channelIndex);
-        closeDeviceIfIdle();
-        return;
-    }
     channel.previewFailureCount = 0;
     channel.audioEnabled = audioEnabled;
     channel.videoFailed = 0;
@@ -433,8 +413,6 @@ void CaptureController::startCapture(int channelIndex)
         channel.audioReceivedFrames = 0;
         channel.audioReleaseFailedFrames = channel.audioOutputFailedFrames = 0;
     }
-    channel.signalConnected.store(channel.cachedSignalStatus.connected != 0,
-                                  std::memory_order_release);
     channel.stopRequested.store(false, std::memory_order_release);
     channel.running.store(true, std::memory_order_release);
     channel.captureThreadExited.store(false, std::memory_order_release);
@@ -464,14 +442,15 @@ void CaptureController::stopCapture(int channelIndex)
     if (handle_ != nullptr && channel.running.load(std::memory_order_acquire))
     {
         channel.stopRequested.store(true, std::memory_order_release);
-        channel.signalReady.notify_all();
         channel.audioQueueReady.notify_all();
         joinCaptureThread(channelIndex);
         joinAudioThread(channelIndex);
         if (gvfg_preview_wait_idle(channel.previewHandle, 2000) != GVFG_PREVIEW_OK)
             appendLog(QStringLiteral("CH%1 [APP] WARNING preview drain timeout | in-flight not classified as lost").arg(channelIndex));
         logDeliveryStatus(channelIndex, true);
-        gvfg_stop_channel(handle_, channelIndex);
+        const gvfg_status_t stopStatus = gvfg_stop_channel(handle_, channelIndex);
+        if (stopStatus != GVFG_OK)
+            reportError(QStringLiteral("gvfg_stop_channel"), stopStatus, channelIndex);
         channel.running.store(false, std::memory_order_release);
         channel.frameAvailable.store(false, std::memory_order_release);
         updateSignalStatus(false);
@@ -548,16 +527,6 @@ void CaptureController::processPendingEvents()
                 eventType == GVFG_EVENT_VIDEO_INPUT_PLUGIN ||
                 eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG)
                 updateSignalStatus();
-
-            if (eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG)
-            {
-                channels_[channel].signalConnected.store(false, std::memory_order_release);
-            }
-            else if (eventType == GVFG_EVENT_VIDEO_INPUT_PLUGIN)
-            {
-                channels_[channel].signalConnected.store(true, std::memory_order_release);
-                channels_[channel].signalReady.notify_all();
-            }
 
             if (eventType == GVFG_EVENT_VIDEO_INPUT_PLUGIN ||
                 eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG ||
@@ -778,40 +747,18 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
 
 void CaptureController::captureReadLoop(int channelIndex)
 {
-    std::chrono::steady_clock::time_point noFrameSince{};
-    std::chrono::steady_clock::time_point nextNoFrameReport{};
-    bool captureStalledLogged = false;
     ChannelRuntime &channel = channels_[channelIndex];
     while (!channel.stopRequested.load(std::memory_order_acquire))
     {
-        {
-            std::unique_lock<std::mutex> lock(channel.signalMutex);
-            channel.signalReady.wait(lock, [&channel]() {
-                return channel.stopRequested.load(std::memory_order_acquire) ||
-                       channel.signalConnected.load(std::memory_order_acquire);
-            });
-        }
-        if (channel.stopRequested.load(std::memory_order_acquire))
-            break;
-
         gvfg_frame_t frame{};
         const gvfg_status_t st = gvfg_read_channel_frame(handle_, channelIndex, &frame, 200);
         if (st == GVFG_OK)
         {
-            noFrameSince = {};
-            nextNoFrameReport = {};
             if (!channel.frameAvailable.exchange(true, std::memory_order_acq_rel))
             {
                 QMetaObject::invokeMethod(this, [this]()
                                           { emit stateChanged(); }, Qt::QueuedConnection);
             }
-            if (captureStalledLogged)
-            {
-                captureStalledLogged = false;
-                QMetaObject::invokeMethod(this, [this, channelIndex]()
-                                          { appendLog(QStringLiteral("CH%1 [SDK] Video frame delivery resumed").arg(channelIndex)); }, Qt::QueuedConnection);
-            }
-
             const bool attemptedPreview = channel.previewHandle &&
                 channel.previewVisible.load(std::memory_order_acquire);
             if (attemptedPreview)
@@ -881,29 +828,7 @@ void CaptureController::captureReadLoop(int channelIndex)
         }
 
         if (st == GVFG_ETIMEOUT)
-        {
-            const auto now = std::chrono::steady_clock::now();
-            if (noFrameSince == std::chrono::steady_clock::time_point{})
-            {
-                noFrameSince = now;
-                nextNoFrameReport = now + std::chrono::seconds(2);
-            }
-            if (now >= nextNoFrameReport)
-            {
-                captureStalledLogged = true;
-                const uint64_t elapsedMs = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(now - noFrameSince).count());
-                nextNoFrameReport = now + std::chrono::seconds(10);
-                QMetaObject::invokeMethod(this, [this, channelIndex, elapsedMs]()
-                                          {
-                                              appendLog(QStringLiteral("CH%1 [SDK] ERROR no video frame returned | duration_ms=%2")
-                                                            .arg(channelIndex)
-                                                            .arg(elapsedMs));
-                                          },
-                                          Qt::QueuedConnection);
-            }
             continue;
-        }
         if (channel.stopRequested.load(std::memory_order_acquire))
             break;
 
@@ -935,16 +860,6 @@ void CaptureController::audioReadLoop(int channelIndex)
     ChannelRuntime &channel = channels_[channelIndex];
     while (!channel.stopRequested.load(std::memory_order_acquire))
     {
-        {
-            std::unique_lock<std::mutex> lock(channel.signalMutex);
-            channel.signalReady.wait(lock, [&channel]() {
-                return channel.stopRequested.load(std::memory_order_acquire) ||
-                       channel.signalConnected.load(std::memory_order_acquire);
-            });
-        }
-        if (channel.stopRequested.load(std::memory_order_acquire))
-            break;
-
         gvfg_audio_frame_t frame{};
         const gvfg_status_t status = gvfg_read_channel_audio_frame(handle_, channelIndex, &frame, 200);
         if (status == GVFG_ETIMEOUT)
