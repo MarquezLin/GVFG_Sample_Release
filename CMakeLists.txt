@@ -15,17 +15,37 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia)
 
+if(MSVC)
+  set(GVFG_CAPTURE_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/gvfg.lib")
+  set(GVFG_PREVIEW_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/gvfg_preview.lib")
+elseif(MINGW)
+  set(GVFG_CAPTURE_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/libgvfg.dll.a")
+  set(GVFG_PREVIEW_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/libgvfg_preview.dll.a")
+else()
+  message(FATAL_ERROR "Unsupported compiler. Use MSVC or MinGW on Windows x64.")
+endif()
+
+foreach(GVFG_REQUIRED_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/bin/gvfg.dll"
+    "${CMAKE_CURRENT_SOURCE_DIR}/bin/gvfg_preview.dll"
+    "${GVFG_CAPTURE_IMPLIB}"
+    "${GVFG_PREVIEW_IMPLIB}")
+  if(NOT EXISTS "${GVFG_REQUIRED_FILE}")
+    message(FATAL_ERROR "Required GVFG SDK file was not found: ${GVFG_REQUIRED_FILE}")
+  endif()
+endforeach()
+
 add_library(GVFG::Capture SHARED IMPORTED GLOBAL)
 set_target_properties(GVFG::Capture PROPERTIES
   IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/bin/gvfg.dll"
-  IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/gvfg.lib"
+  IMPORTED_IMPLIB "${GVFG_CAPTURE_IMPLIB}"
   INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 add_library(GVFG::Preview SHARED IMPORTED GLOBAL)
 set_target_properties(GVFG::Preview PROPERTIES
   IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/bin/gvfg_preview.dll"
-  IMPORTED_IMPLIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/gvfg_preview.lib"
+  IMPORTED_IMPLIB "${GVFG_PREVIEW_IMPLIB}"
   INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
