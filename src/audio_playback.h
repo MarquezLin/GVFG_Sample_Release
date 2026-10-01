@@ -19,6 +19,9 @@ public:
         uint64_t receivedFrames = 0;
         uint64_t releaseFailedFrames = 0;
         uint64_t outputFailedFrames = 0;
+        uint64_t queueFullFrames = 0;
+        uint64_t retryAttempts = 0;
+        uint64_t recoveries = 0;
     };
 
     using LogCallback = std::function<void(const QString &)>;
@@ -33,7 +36,7 @@ public:
     void stop();
     bool enqueue(std::vector<uint8_t> pcm, uint64_t timestampNs);
     void updateVideoTimestamp(uint64_t timestampNs);
-    void resetTimeline();
+    void resetTimeline(const QString &reason);
     void recordReceivedFrame();
     void recordReleaseFailure();
     Statistics statistics() const;

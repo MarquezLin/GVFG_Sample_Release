@@ -14,6 +14,7 @@ public:
 
 public slots:
     void append(const QString &message);
+    void appendDiagnostic(const QString &message);
 
 signals:
     void lineReady(const QString &line);

@@ -9,14 +9,6 @@
 #include <QSize>
 #include <algorithm>
 
-namespace
-{
-constexpr int kScreenMarginWidth = 16;
-constexpr int kScreenMarginHeight = 48;
-constexpr int kMinimumPreviewWidth = 320;
-constexpr int kMinimumPreviewHeight = 180;
-}
-
 PreviewWindow::PreviewWindow(QWidget *parent)
     : QWidget(parent), ui_(new Ui::PreviewWindow)
 {
@@ -64,10 +56,8 @@ void PreviewWindow::setSourceSize(int sourceWidth, int sourceHeight)
     QSize targetSize(sourceWidth, sourceHeight);
     if (targetScreen)
     {
-        const QSize maxSize = targetScreen->availableGeometry().size() - windowOverhead -
-                              QSize(kScreenMarginWidth, kScreenMarginHeight);
-        const QSize boundedSize(std::max(kMinimumPreviewWidth, maxSize.width()),
-                                std::max(kMinimumPreviewHeight, maxSize.height()));
+        const QSize maxSize = targetScreen->availableGeometry().size() - windowOverhead - QSize(16, 48);
+        const QSize boundedSize(std::max(320, maxSize.width()), std::max(180, maxSize.height()));
         if (targetSize.width() > boundedSize.width() || targetSize.height() > boundedSize.height())
             targetSize.scale(boundedSize, Qt::KeepAspectRatio);
     }

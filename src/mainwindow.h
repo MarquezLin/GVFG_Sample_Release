@@ -1,5 +1,7 @@
 #pragma once
 
+#include <gvfg_capture.h>
+
 #include <QWidget>
 #include <array>
 
@@ -26,6 +28,7 @@ protected:
 private:
     void syncControllerOptions(int channel);
     void showPreviewWindow(int channel, bool fullscreen);
+    void updateOutputFormatOptions(int changedChannel = -1);
     void updateUiState();
     void appendLogLine(const QString &line);
 
@@ -34,3 +37,5 @@ private:
     SampleLog *log_ = nullptr;
     std::array<PreviewWindow *, 2> previewWindows_{};
 };
+
+QWidget *createMainWindow();

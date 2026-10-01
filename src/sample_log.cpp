@@ -9,7 +9,11 @@ namespace
 {
 QString filePrefix()
 {
+#if GVFG_INTERNAL_DIAGNOSTICS
+    return QStringLiteral("gvfg_qt_preview_debug");
+#else
     return QStringLiteral("gvfg_qt_preview");
+#endif
 }
 }
 
@@ -32,6 +36,15 @@ void SampleLog::append(const QString &message)
         writeLine(line);
         emit lineReady(line);
     }
+}
+
+void SampleLog::appendDiagnostic(const QString &message)
+{
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz"));
+    const QStringList lines = message.split(QLatin1Char('\n'));
+    for (int i = 0; i < lines.size(); ++i)
+        writeLine(QStringLiteral("[%1] %2%3").arg(
+            timestamp, i == 0 ? QStringLiteral("Diagnostic | ") : QStringLiteral("             "), lines.at(i)));
 }
 
 bool SampleLog::openPart()

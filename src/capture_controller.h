@@ -2,6 +2,10 @@
 
 #include "audio_playback.h"
 
+#if GVFG_INTERNAL_DIAGNOSTICS
+#include "internal_diagnostics.h"
+#endif
+
 #include <gvfg_capture.h>
 #include <gvfg_preview.h>
 
@@ -10,6 +14,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <thread>
 
@@ -30,6 +35,7 @@ public:
     void setPreviewVisible(int channel, bool visible);
 
     bool deviceOpen() const { return handle_ != nullptr; }
+    bool channelOpened(int channel) const;
     bool channelRunning(int channel) const;
     bool frameAvailable(int channel) const;
     bool cachedSignalStatus(int channel, gvfg_signal_status_t *status) const;
@@ -52,12 +58,14 @@ signals:
     void statusChanged(const QString &text);
     void sdiInfoChanged(const QString &text);
     void logMessage(const QString &message);
+#if GVFG_INTERNAL_DIAGNOSTICS
+    void diagnosticMessage(const QString &message);
+#endif
     void previewSourceSizeChanged(int channel, int width, int height);
     void previewShowRequested(int channel);
     void previewCloseRequested(int channel);
 
 private:
-    static bool isValidChannel(int channel);
     bool openDevice();
     bool applyOutputFormat(int channel);
     bool prepareAudio(int channel);
@@ -72,7 +80,7 @@ private:
         gvfg_pixel_format_t requestedFormat = GVFG_PIXFMT_YUY2;
         void *previewTarget = nullptr;
         gvfg_preview_handle previewHandle = nullptr;
-        std::atomic<bool> running{false}, stopRequested{false};
+        std::atomic<bool> running{false}, stopRequested{false}, signalConnected{false};
         std::atomic<bool> frameAvailable{false}, previewVisible{false}, captureThreadExited{true};
         std::thread captureThread, audioThread;
         AudioPlayback audioPlayback;
@@ -92,9 +100,11 @@ private:
 
     void reportError(const QString &apiName, gvfg_status_t status, int channel = -1);
     void appendLog(const QString &message);
-    void postLog(const QString &message);
     bool openChannel(int channel);
     void refreshSdiInfo(int channel);
+#if GVFG_INTERNAL_DIAGNOSTICS
+    void writeDiagnosticSnapshot(const QString &statusText);
+#endif
     void captureReadLoop(int channel);
     void audioReadLoop(int channel);
     void joinCaptureThread(int channel);
@@ -106,6 +116,9 @@ private:
     gvfg_handle handle_ = nullptr;
     int selectedDeviceIndex_ = -1;
     std::array<ChannelRuntime, 2> channels_{};
+#if GVFG_INTERNAL_DIAGNOSTICS
+    InternalDiagnostics internalDiagnostics_;
+#endif
     std::array<bool, 2> channelStatusVisible_{{true, true}};
     QTimer *runtimeStatusTimer_ = nullptr;
     QString lastSignalStatusText_;
