@@ -592,6 +592,9 @@ extern "C"
     /* Return the loaded GVFG runtime DLL version, for example "1.0.0". */
     GVFG_API const char *gvfg_get_version(void);
 
+    /* Return the GigabyteLib version compiled into the loaded GVFG runtime DLL. */
+    GVFG_API const char *gvfg_get_gigabyte_lib_version(void);
+
     /* Convert a gvfg_pixel_format_t value to a static English format name. */
     GVFG_API const char *gvfg_pixel_format_name(
         GVFG_PARAM_IN int pixel_format);

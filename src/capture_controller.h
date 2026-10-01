@@ -10,10 +10,8 @@
 
 #include <array>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <thread>
-#include <vector>
 
 class QTimer;
 
@@ -32,11 +30,11 @@ public:
     void setPreviewVisible(int channel, bool visible);
 
     bool deviceOpen() const { return handle_ != nullptr; }
-    bool channelOpened(int channel) const;
     bool channelRunning(int channel) const;
     bool frameAvailable(int channel) const;
     bool cachedSignalStatus(int channel, gvfg_signal_status_t *status) const;
     QString sdkVersion() const;
+    QString gigabyteLibVersion() const;
 
 public slots:
     void refreshDevices();

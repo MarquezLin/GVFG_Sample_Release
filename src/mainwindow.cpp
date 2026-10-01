@@ -10,35 +10,42 @@
 
 namespace
 {
-constexpr bool kChannel1UiVisible = false;
+    constexpr bool kChannel1UiVisible = false;
+    constexpr int kMaxLogBlockCount = 300;
+    constexpr int kY210FormatIndex = 1;
 
-class LogHighlighter final : public QSyntaxHighlighter
-{
-public:
-    explicit LogHighlighter(QTextDocument *document) : QSyntaxHighlighter(document)
+    class LogHighlighter final : public QSyntaxHighlighter
     {
-        error_.setForeground(QColor(200, 0, 0)); error_.setFontWeight(QFont::Bold);
-        recovery_.setForeground(QColor(0, 128, 0)); recovery_.setFontWeight(QFont::Bold);
-        warning_.setForeground(QColor(190, 110, 0)); warning_.setFontWeight(QFont::Bold);
-    }
-protected:
-    void highlightBlock(const QString &text) override
-    {
-        if (text.contains(QStringLiteral("VIDEO_INPUT_UNPLUG")) ||
-            text.contains(QStringLiteral("No signal"), Qt::CaseInsensitive) ||
-            text.contains(QStringLiteral("Video Undetected"), Qt::CaseInsensitive) ||
-            text.contains(QStringLiteral("failed"), Qt::CaseInsensitive) ||
-            text.contains(QStringLiteral("error"), Qt::CaseInsensitive))
-            setFormat(0, text.size(), error_);
-        else if (text.contains(QStringLiteral("warning"), Qt::CaseInsensitive))
-            setFormat(0, text.size(), warning_);
-        else if (text.contains(QStringLiteral("VIDEO_INPUT_PLUGIN")) ||
-                 text.contains(QStringLiteral("recovered"), Qt::CaseInsensitive))
-            setFormat(0, text.size(), recovery_);
-    }
-private:
-    QTextCharFormat error_, recovery_, warning_;
-};
+    public:
+        explicit LogHighlighter(QTextDocument *document) : QSyntaxHighlighter(document)
+        {
+            error_.setForeground(QColor(200, 0, 0));
+            error_.setFontWeight(QFont::Bold);
+            recovery_.setForeground(QColor(0, 128, 0));
+            recovery_.setFontWeight(QFont::Bold);
+            warning_.setForeground(QColor(190, 110, 0));
+            warning_.setFontWeight(QFont::Bold);
+        }
+
+    protected:
+        void highlightBlock(const QString &text) override
+        {
+            if (text.contains(QStringLiteral("VIDEO_INPUT_UNPLUG")) ||
+                text.contains(QStringLiteral("No signal"), Qt::CaseInsensitive) ||
+                text.contains(QStringLiteral("Video Undetected"), Qt::CaseInsensitive) ||
+                text.contains(QStringLiteral("failed"), Qt::CaseInsensitive) ||
+                text.contains(QStringLiteral("error"), Qt::CaseInsensitive))
+                setFormat(0, text.size(), error_);
+            else if (text.contains(QStringLiteral("warning"), Qt::CaseInsensitive))
+                setFormat(0, text.size(), warning_);
+            else if (text.contains(QStringLiteral("VIDEO_INPUT_PLUGIN")) ||
+                     text.contains(QStringLiteral("recovered"), Qt::CaseInsensitive))
+                setFormat(0, text.size(), recovery_);
+        }
+
+    private:
+        QTextCharFormat error_, recovery_, warning_;
+    };
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -46,8 +53,9 @@ MainWindow::MainWindow(QWidget *parent)
       log_(new SampleLog(this))
 {
     ui_->setupUi(this);
-    setWindowTitle(QStringLiteral("GVFG Preview Sample - SDK v%1").arg(controller_->sdkVersion()));
-    ui_->logEdit->setMaximumBlockCount(300);
+    setWindowTitle(QStringLiteral("GVFG Preview Sample - APP v%1")
+                       .arg(QStringLiteral(GVFG_SAMPLE_VERSION)));
+    ui_->logEdit->setMaximumBlockCount(kMaxLogBlockCount);
     new LogHighlighter(ui_->logEdit->document());
     ui_->statusLabel->setWordWrap(true);
 
@@ -57,77 +65,91 @@ MainWindow::MainWindow(QWidget *parent)
         previewWindows_[channel]->setWindowTitle(QStringLiteral("GVFG Preview - CH%1").arg(channel));
         controller_->setPreviewTarget(channel, previewWindows_[channel]->nativePreviewHandle());
         connect(previewWindows_[channel], &PreviewWindow::previewVisibilityChanged,
-                this, [this, channel](bool visible) { controller_->setPreviewVisible(channel, visible); });
+                this, [this, channel](bool visible)
+                { controller_->setPreviewVisible(channel, visible); });
     }
     controller_->setChannelStatusVisible(GVFG_CHANNEL_1, kChannel1UiVisible);
 
-    connect(controller_, &CaptureController::devicesChanged, this, [this](const QStringList &names) {
+    connect(controller_, &CaptureController::devicesChanged, this, [this](const QStringList &names)
+            {
         ui_->deviceCombo->clear();
         if (names.isEmpty()) ui_->deviceCombo->addItem(QStringLiteral("No GVFG device found"), -1);
         else for (int i = 0; i < names.size(); ++i) ui_->deviceCombo->addItem(names.at(i), i);
-        updateUiState();
-    });
+        updateUiState(); });
     connect(controller_, &CaptureController::stateChanged, this, &MainWindow::updateUiState);
     connect(controller_, &CaptureController::statusChanged, ui_->statusLabel, &QLabel::setText);
     connect(controller_, &CaptureController::sdiInfoChanged, ui_->sdiInfoLabel, &QLabel::setText);
     connect(controller_, &CaptureController::logMessage, log_, &SampleLog::append, Qt::QueuedConnection);
     connect(log_, &SampleLog::lineReady, this, &MainWindow::appendLogLine);
     connect(controller_, &CaptureController::previewSourceSizeChanged, this,
-            [this](int channel, int width, int height) {
-                if (width > 0 && height > 0) previewWindows_[channel]->setSourceSize(width, height);
+            [this](int channel, int width, int height)
+            {
+                if (width > 0 && height > 0)
+                    previewWindows_[channel]->setSourceSize(width, height);
             });
     connect(controller_, &CaptureController::previewShowRequested, this,
-            [this](int channel) {
+            [this](int channel)
+            {
                 previewWindows_[channel]->showPreview();
                 controller_->setPreviewTarget(channel, previewWindows_[channel]->nativePreviewHandle());
             });
     connect(controller_, &CaptureController::previewCloseRequested, this,
-            [this](int channel) { previewWindows_[channel]->closePreview(); });
+            [this](int channel)
+            { previewWindows_[channel]->closePreview(); });
 
     connect(ui_->refreshButton, &QPushButton::clicked, controller_, &CaptureController::refreshDevices);
-    connect(ui_->deviceCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+    connect(ui_->deviceCombo, &QComboBox::currentIndexChanged, this, [this](int)
+            {
         const int selectedDevice = ui_->deviceCombo->currentData().toInt();
         if (controller_->deviceOpen())
             controller_->closeDevice();
         controller_->setSelectedDeviceIndex(selectedDevice);
-        updateUiState();
-    });
-    connect(ui_->ch0StartButton, &QPushButton::clicked, this, [this] { syncControllerOptions(0); controller_->startCapture(0); });
-    connect(ui_->ch1StartButton, &QPushButton::clicked, this, [this] { syncControllerOptions(1); controller_->startCapture(1); });
-    connect(ui_->ch0StopButton, &QPushButton::clicked, controller_, [this] { controller_->stopCapture(0); });
-    connect(ui_->ch1StopButton, &QPushButton::clicked, controller_, [this] { controller_->stopCapture(1); });
-    connect(ui_->ch0PreviewButton, &QPushButton::clicked, this, [this] { showPreviewWindow(0, false); });
-    connect(ui_->ch1PreviewButton, &QPushButton::clicked, this, [this] { showPreviewWindow(1, false); });
-    connect(ui_->ch0FullscreenButton, &QPushButton::clicked, this, [this] { showPreviewWindow(0, true); });
-    connect(ui_->ch1FullscreenButton, &QPushButton::clicked, this, [this] { showPreviewWindow(1, true); });
+        updateUiState(); });
+    connect(ui_->ch0StartButton, &QPushButton::clicked, this, [this]
+            { syncControllerOptions(0); controller_->startCapture(0); });
+    connect(ui_->ch1StartButton, &QPushButton::clicked, this, [this]
+            { syncControllerOptions(1); controller_->startCapture(1); });
+    connect(ui_->ch0StopButton, &QPushButton::clicked, controller_, [this]
+            { controller_->stopCapture(0); });
+    connect(ui_->ch1StopButton, &QPushButton::clicked, controller_, [this]
+            { controller_->stopCapture(1); });
+    connect(ui_->ch0PreviewButton, &QPushButton::clicked, this, [this]
+            { showPreviewWindow(0, false); });
+    connect(ui_->ch1PreviewButton, &QPushButton::clicked, this, [this]
+            { showPreviewWindow(1, false); });
+    connect(ui_->ch0FullscreenButton, &QPushButton::clicked, this, [this]
+            { showPreviewWindow(0, true); });
+    connect(ui_->ch1FullscreenButton, &QPushButton::clicked, this, [this]
+            { showPreviewWindow(1, true); });
 
-    auto formatChanged = [this](int channel) {
-        updateOutputFormatOptions();
-        syncControllerOptions(channel);
-    };
-    connect(ui_->ch0OutputFormatCombo, &QComboBox::currentIndexChanged, this, [formatChanged](int) { formatChanged(0); });
-    connect(ui_->ch1OutputFormatCombo, &QComboBox::currentIndexChanged, this, [formatChanged](int) { formatChanged(1); });
+    connect(ui_->ch0OutputFormatCombo, &QComboBox::currentIndexChanged, this, [this](int)
+            { syncControllerOptions(GVFG_CHANNEL_0); });
+    connect(ui_->ch1OutputFormatCombo, &QComboBox::currentIndexChanged, this, [this](int)
+            { syncControllerOptions(GVFG_CHANNEL_1); });
 
-    connect(ui_->ch0ZeroCopyCheckBox, &QCheckBox::toggled, this, [this](bool) {
+    connect(ui_->ch0ZeroCopyCheckBox, &QCheckBox::toggled, this, [this](bool)
+            {
         syncControllerOptions(GVFG_CHANNEL_0);
         if (controller_->deviceOpen()) {
             const int selectedDevice = ui_->deviceCombo->currentData().toInt();
             controller_->closeDevice();
             controller_->setSelectedDeviceIndex(selectedDevice);
-        }
-    });
-    connect(ui_->ch1ZeroCopyCheckBox, &QCheckBox::toggled, this, [this](bool) {
+        } });
+    connect(ui_->ch1ZeroCopyCheckBox, &QCheckBox::toggled, this, [this](bool)
+            {
         syncControllerOptions(GVFG_CHANNEL_1);
         if (controller_->deviceOpen()) {
             const int selectedDevice = ui_->deviceCombo->currentData().toInt();
             controller_->closeDevice();
             controller_->setSelectedDeviceIndex(selectedDevice);
-        }
-    });
+        } });
 
-    updateOutputFormatOptions();
     updateUiState();
-    log_->append(QStringLiteral("GVFG SDK version | %1").arg(controller_->sdkVersion()));
+    log_->append(QStringLiteral("= GVFG Preview Sample startup ="));
+    log_->append(QStringLiteral("APP:      v%1").arg(QStringLiteral(GVFG_SAMPLE_VERSION)));
+    log_->append(QStringLiteral("SDK:      v%1").arg(controller_->sdkVersion()));
+    log_->append(QStringLiteral("GigaLib: v%1").arg(controller_->gigabyteLibVersion()));
+    log_->append(QStringLiteral("====================="));
     log_->append(log_->fileAvailable()
                      ? QStringLiteral("Log file | %1").arg(log_->filePath())
                      : QStringLiteral("Log file unavailable | %1").arg(log_->filePath()));
@@ -145,32 +167,35 @@ MainWindow::~MainWindow()
     delete ui_;
 }
 
-QWidget *createMainWindow() { return new MainWindow(); }
-
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     controller_->closeDevice();
-    for (PreviewWindow *window : previewWindows_) if (window) window->closePreview();
+    for (PreviewWindow *window : previewWindows_)
+        if (window)
+            window->closePreview();
     QWidget::closeEvent(event);
 }
 
 void MainWindow::syncControllerOptions(int channel)
 {
-    const bool zeroCopy = channel == 0 ? ui_->ch0ZeroCopyCheckBox->isChecked() : ui_->ch1ZeroCopyCheckBox->isChecked();
-    const int formatIndex = channel == 0 ? ui_->ch0OutputFormatCombo->currentIndex() : ui_->ch1OutputFormatCombo->currentIndex();
-    const bool audio = channel == 0 && ui_->ch0AudioCheckBox->isChecked();
+    const bool zeroCopy = channel == GVFG_CHANNEL_0 ? ui_->ch0ZeroCopyCheckBox->isChecked() : ui_->ch1ZeroCopyCheckBox->isChecked();
+    const int formatIndex = channel == GVFG_CHANNEL_0 ? ui_->ch0OutputFormatCombo->currentIndex() : ui_->ch1OutputFormatCombo->currentIndex();
+    const bool audio = channel == GVFG_CHANNEL_0 && ui_->ch0AudioCheckBox->isChecked();
     controller_->setChannelOptions(channel, zeroCopy,
-                                   formatIndex == 1 ? GVFG_PIXFMT_Y210 : GVFG_PIXFMT_YUY2, audio);
+                                   formatIndex == kY210FormatIndex ? GVFG_PIXFMT_Y210 : GVFG_PIXFMT_YUY2, audio);
 }
 
 void MainWindow::showPreviewWindow(int channel, bool fullscreen)
 {
-    if (!controller_->channelRunning(channel) || !controller_->frameAvailable(channel)) return;
+    if (!controller_->channelRunning(channel) || !controller_->frameAvailable(channel))
+        return;
     gvfg_signal_status_t signal{};
     if (controller_->cachedSignalStatus(channel, &signal) && signal.width > 0 && signal.height > 0)
         previewWindows_[channel]->setSourceSize(signal.width, signal.height);
-    if (fullscreen) previewWindows_[channel]->showFullscreenPreview();
-    else previewWindows_[channel]->showPreview();
+    if (fullscreen)
+        previewWindows_[channel]->showFullscreenPreview();
+    else
+        previewWindows_[channel]->showPreview();
     controller_->setPreviewTarget(channel, previewWindows_[channel]->nativePreviewHandle());
     if (!controller_->applyPreview(channel))
         log_->append(
@@ -179,29 +204,23 @@ void MainWindow::showPreviewWindow(int channel, bool fullscreen)
                 : QStringLiteral("CH%1 [APP] Show preview failed | window update").arg(channel));
 }
 
-void MainWindow::updateOutputFormatOptions()
-{
-    QComboBox *combos[] = {ui_->ch0OutputFormatCombo, ui_->ch1OutputFormatCombo};
-    for (int channel = 0; channel < 2; ++channel)
-    {
-        combos[channel]->setToolTip(
-            QStringLiteral("Requested CH%1 capture output format").arg(channel));
-    }
-}
-
 void MainWindow::updateUiState()
 {
     const bool running[] = {controller_->channelRunning(0), controller_->channelRunning(1)};
     const bool anyRunning = running[0] || running[1];
     const bool selected = ui_->deviceCombo->currentData().toInt() >= 0;
-    ui_->refreshButton->setEnabled(!anyRunning); ui_->deviceCombo->setEnabled(!anyRunning);
-    ui_->ch0StartButton->setEnabled(selected && !running[0]); ui_->ch1StartButton->setEnabled(selected && !running[1]);
-    ui_->ch0StopButton->setEnabled(running[0]); ui_->ch1StopButton->setEnabled(running[1]);
+    ui_->refreshButton->setEnabled(!anyRunning);
+    ui_->deviceCombo->setEnabled(!anyRunning);
+    ui_->ch0StartButton->setEnabled(selected && !running[0]);
+    ui_->ch1StartButton->setEnabled(selected && !running[1]);
+    ui_->ch0StopButton->setEnabled(running[0]);
+    ui_->ch1StopButton->setEnabled(running[1]);
     ui_->ch0PreviewButton->setEnabled(running[0] && controller_->frameAvailable(0));
     ui_->ch1PreviewButton->setEnabled(running[1] && controller_->frameAvailable(1));
     ui_->ch0FullscreenButton->setEnabled(ui_->ch0PreviewButton->isEnabled());
     ui_->ch1FullscreenButton->setEnabled(ui_->ch1PreviewButton->isEnabled());
-    ui_->ch0OutputFormatCombo->setEnabled(!running[0]); ui_->ch1OutputFormatCombo->setEnabled(!running[1]);
+    ui_->ch0OutputFormatCombo->setEnabled(!running[0]);
+    ui_->ch1OutputFormatCombo->setEnabled(!running[1]);
     ui_->ch0ZeroCopyCheckBox->setEnabled(!anyRunning);
     ui_->ch1ZeroCopyCheckBox->setEnabled(!anyRunning);
     ui_->ch0AudioCheckBox->setEnabled(!running[0]);

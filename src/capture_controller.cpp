@@ -1,6 +1,5 @@
 #include "capture_controller.h"
 #include <QMetaObject>
-#include <QStringList>
 #include <QTimer>
 
 #include <cstring>
@@ -14,8 +13,9 @@
 
 namespace
 {
-    constexpr int kAudioSampleRate = 48000;
-    constexpr int kAudioChannelCount = 2;
+    constexpr int kRuntimeStatusIntervalMs = 200;
+    constexpr uint32_t kFrameReadTimeoutMs = 200;
+    constexpr uint32_t kPreviewDrainTimeoutMs = 2000;
 
     QString eventTypeText(gvfg_event_type_t type)
     {
@@ -37,7 +37,7 @@ bool CaptureController::isValidChannel(int channel)
 CaptureController::CaptureController(QObject *parent) : QObject(parent)
 {
     runtimeStatusTimer_ = new QTimer(this);
-    runtimeStatusTimer_->setInterval(200);
+    runtimeStatusTimer_->setInterval(kRuntimeStatusIntervalMs);
     connect(runtimeStatusTimer_, &QTimer::timeout, this, [this] {
         processPendingEvents();
         updateSignalStatus(false);
@@ -77,11 +77,6 @@ void CaptureController::setPreviewVisible(int channel, bool visible)
         channels_[channel].previewVisible.store(visible, std::memory_order_release);
 }
 
-bool CaptureController::channelOpened(int channel) const
-{
-    return isValidChannel(channel) && channels_[channel].opened;
-}
-
 bool CaptureController::channelRunning(int channel) const
 {
     return isValidChannel(channel) &&
@@ -106,6 +101,11 @@ bool CaptureController::cachedSignalStatus(int channel, gvfg_signal_status_t *st
 QString CaptureController::sdkVersion() const
 {
     return QString::fromLatin1(gvfg_get_version());
+}
+
+QString CaptureController::gigabyteLibVersion() const
+{
+    return QString::fromLatin1(gvfg_get_gigabyte_lib_version());
 }
 
 void CaptureController::refreshDevices()
@@ -148,6 +148,8 @@ bool CaptureController::openDevice()
         return false;
     }
 
+    // A typical GVFG session follows this lifecycle:
+    // create -> configure -> open -> start -> read/release -> stop -> destroy.
     gvfg_status_t st = gvfg_create(&handle_);
     if (st != GVFG_OK || handle_ == nullptr)
     {
@@ -176,6 +178,8 @@ bool CaptureController::openChannel(int channel)
     gvfg_status_t status = GVFG_OK;
     if (newlyOpened)
     {
+        // Zero-copy mode is a channel-open option and must be selected before
+        // gvfg_open_channel(). It cannot be changed on an already-open channel.
         status = gvfg_set_channel_zero_copy_enabled(handle_, channel, zeroCopyEnabled ? 1 : 0);
         if (status != GVFG_OK)
         {
@@ -191,6 +195,8 @@ bool CaptureController::openChannel(int channel)
         runtime.opened = true;
     }
 
+    // Configure optional streams and the requested video format before
+    // gvfg_start_channel(). Runtime format changes require stop/reconfigure/start.
     status = gvfg_set_channel_audio_enabled(
         handle_, channel, runtime.requestedAudio ? 1 : 0);
     if (status != GVFG_OK)
@@ -311,21 +317,14 @@ bool CaptureController::prepareAudio(int channelIndex)
         reportError(QStringLiteral("gvfg_get_channel_audio_format"), status, channelIndex);
         return false;
     }
-    if (channel.audioFormat.sample_rate == kAudioSampleRate &&
-        channel.audioFormat.channels == kAudioChannelCount &&
-        channel.audioFormat.bits_per_sample == 16)
-        return true;
-
-    appendLog(QStringLiteral("CH%1 [APP] ERROR audio format unsupported | %2 Hz %3 ch %4-bit")
-                  .arg(channelIndex)
-                  .arg(channel.audioFormat.sample_rate)
-                  .arg(channel.audioFormat.channels)
-                  .arg(channel.audioFormat.bits_per_sample));
-    return false;
+    // Use the format reported by the SDK. The playback helper is responsible
+    // for reporting whether the current Windows audio device can play it.
+    return true;
 }
 
 void CaptureController::startCapture(int channelIndex)
 {
+    // 1. Validate the request and avoid starting the same channel twice.
     if (!isValidChannel(channelIndex))
         return;
 
@@ -333,12 +332,17 @@ void CaptureController::startCapture(int channelIndex)
     if (channel.running.load(std::memory_order_acquire))
         return;
 
+    // 2. Create the shared SDK session when needed, then configure and open
+    // this channel. openChannel() applies zero-copy, audio, and video-format
+    // options before capture starts.
     if (!openChannel(channelIndex))
     {
         closeDeviceIfIdle();
         return;
     }
 
+    // 3. When audio is requested, query the format selected by the SDK. Pass
+    // that format to the playback helper instead of assuming fixed PCM values.
     if (!prepareAudio(channelIndex))
     {
         closeDeviceIfIdle();
@@ -346,6 +350,9 @@ void CaptureController::startCapture(int channelIndex)
     }
     const bool audioEnabled = channel.requestedAudio;
 
+    // 4. Start SDK capture. Only after this succeeds may the application read
+    // video/audio frames and channel events. The matching stop operation is
+    // gvfg_stop_channel().
     const gvfg_status_t st = gvfg_start_channel(handle_, channelIndex);
     if (st != GVFG_OK)
     {
@@ -361,6 +368,8 @@ void CaptureController::startCapture(int channelIndex)
         return;
     }
 
+    // 5. Refresh the detected input information and prepare the preview target.
+    // If preview setup fails, stop the SDK channel before returning.
     updateSignalStatus();
     refreshSdiInfo(channelIndex);
 
@@ -383,6 +392,7 @@ void CaptureController::startCapture(int channelIndex)
         return;
     }
 
+    // 6. Reset per-run state before publishing running=true to worker threads.
     channel.previewFailureCount = 0;
     channel.audioEnabled = audioEnabled;
     channel.videoFailed = 0;
@@ -394,6 +404,9 @@ void CaptureController::startCapture(int channelIndex)
     channel.stopRequested.store(false, std::memory_order_release);
     channel.running.store(true, std::memory_order_release);
     channel.captureThreadExited.store(false, std::memory_order_release);
+
+    // 7. Start application-owned read loops last. The video loop always runs;
+    // audio playback and its read loop are created only when audio was enabled.
     channel.captureThread = std::thread([this, channelIndex]()
                                         { captureReadLoop(channelIndex); });
     if (audioEnabled)
@@ -423,10 +436,12 @@ void CaptureController::stopCapture(int channelIndex)
     ChannelRuntime &channel = channels_[channelIndex];
     if (handle_ != nullptr && channel.running.load(std::memory_order_acquire))
     {
+        // Stop and join application read loops before stopping the SDK channel;
+        // this prevents worker threads from reading while teardown is in progress.
         channel.stopRequested.store(true, std::memory_order_release);
         joinCaptureThread(channelIndex);
         joinAudioThread(channelIndex);
-        if (gvfg_preview_wait_idle(channel.previewHandle, 2000) != GVFG_PREVIEW_OK)
+        if (gvfg_preview_wait_idle(channel.previewHandle, kPreviewDrainTimeoutMs) != GVFG_PREVIEW_OK)
             appendLog(QStringLiteral("CH%1 [APP] WARNING preview drain timeout | in-flight not classified as lost").arg(channelIndex));
         logDeliveryStatus(channelIndex, true);
         const gvfg_status_t stopStatus = gvfg_stop_channel(handle_, channelIndex);
@@ -501,19 +516,22 @@ void CaptureController::processPendingEvents()
         if (!channels_[channel].opened)
             continue;
         gvfg_event_type_t eventType = GVFG_EVENT_UNKNOWN;
+        // A zero timeout makes polling non-blocking. Drain every queued event,
+        // then query signal/SDI state again when the input state has changed.
         while (gvfg_poll_channel_event(handle_, channel, &eventType, 0) == GVFG_OK)
         {
             appendLog(QStringLiteral("CH%1 [SDK] Event | %2").arg(channel).arg(eventTypeText(eventType)));
 
-            if (eventType == GVFG_EVENT_VIDEO_FORMAT_CHANGED ||
+            const bool signalChanged =
+                eventType == GVFG_EVENT_VIDEO_FORMAT_CHANGED ||
                 eventType == GVFG_EVENT_VIDEO_INPUT_PLUGIN ||
-                eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG)
+                eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG;
+            if (signalChanged)
+            {
                 updateSignalStatus();
-
-            if (eventType == GVFG_EVENT_VIDEO_INPUT_PLUGIN ||
-                eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG ||
-                eventType == GVFG_EVENT_VIDEO_FORMAT_CHANGED)
                 refreshSdiInfo(channel);
+                channels_[channel].audioPlayback.resetTimeline();
+            }
 
             if (eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG && channels_[channel].previewHandle)
                 gvfg_preview_clear(channels_[channel].previewHandle);
@@ -530,9 +548,12 @@ void CaptureController::captureReadLoop(int channelIndex)
     while (!channel.stopRequested.load(std::memory_order_acquire))
     {
         gvfg_frame_t frame{};
-        const gvfg_status_t st = gvfg_read_channel_frame(handle_, channelIndex, &frame, 200);
+        const gvfg_status_t st =
+            gvfg_read_channel_frame(handle_, channelIndex, &frame, kFrameReadTimeoutMs);
         if (st == GVFG_OK)
         {
+            // A successful read borrows one SDK-owned frame. Finish all use of
+            // frame.data before releasing it, and release it exactly once.
             if (!channel.frameAvailable.exchange(true, std::memory_order_acq_rel))
             {
                 QMetaObject::invokeMethod(this, [this]()
@@ -600,10 +621,13 @@ void CaptureController::captureReadLoop(int channelIndex)
                                           { reportError(QStringLiteral("gvfg_release_channel_frame"), releaseStatus, channelIndex); }, Qt::QueuedConnection);
                 break;
             }
+            channel.audioPlayback.updateVideoTimestamp(frame.timestamp_ns);
 
             continue;
         }
 
+        // Timeout and failed-read paths did not acquire a frame, so there is
+        // nothing to release.
         if (st == GVFG_ETIMEOUT)
             continue;
         if (channel.stopRequested.load(std::memory_order_acquire))
@@ -638,7 +662,8 @@ void CaptureController::audioReadLoop(int channelIndex)
     while (!channel.stopRequested.load(std::memory_order_acquire))
     {
         gvfg_audio_frame_t frame{};
-        const gvfg_status_t status = gvfg_read_channel_audio_frame(handle_, channelIndex, &frame, 200);
+        const gvfg_status_t status =
+            gvfg_read_channel_audio_frame(handle_, channelIndex, &frame, kFrameReadTimeoutMs);
         if (status == GVFG_ETIMEOUT)
             continue;
         if (status != GVFG_OK)
@@ -652,6 +677,8 @@ void CaptureController::audioReadLoop(int channelIndex)
         }
 
         channel.audioPlayback.recordReceivedFrame();
+        // Audio frame memory is also owned by the SDK. Copy the PCM payload
+        // before release so playback never retains an SDK-owned pointer.
         std::vector<uint8_t> pcm(frame.data_size);
         std::memcpy(pcm.data(), frame.data, frame.data_size);
         const gvfg_status_t releaseStatus =
@@ -668,7 +695,7 @@ void CaptureController::audioReadLoop(int channelIndex)
         }
 
         if (releaseStatus == GVFG_OK &&
-            !channel.audioPlayback.enqueue(std::move(pcm)))
+            !channel.audioPlayback.enqueue(std::move(pcm), frame.timestamp_ns))
             break;
     }
 }

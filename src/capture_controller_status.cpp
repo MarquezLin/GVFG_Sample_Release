@@ -4,9 +4,13 @@
 #include <QStringList>
 
 #include <chrono>
+#include <cstddef>
 
 namespace
 {
+constexpr qint64 kDeliveryLogIntervalMs = 5000;
+constexpr std::size_t kSdkErrorDetailCapacity = 512;
+
 QString frameText(bool valid, int width, int height, const char *pixelFormat, int bitDepth)
 {
     if (!valid || width <= 0 || height <= 0)
@@ -163,7 +167,7 @@ void CaptureController::reportError(const QString &apiName, gvfg_status_t status
         message.prepend(QStringLiteral("CH%1 ").arg(channel));
     if (status < 0 && handle_ != nullptr && isValidChannel(channel))
     {
-        char detail[512] = {};
+        char detail[kSdkErrorDetailCapacity] = {};
         if (gvfg_get_channel_last_sdk_error_detail(handle_, channel, detail, sizeof(detail)) == GVFG_OK &&
             detail[0] != '\0')
             message += QStringLiteral(" | %1").arg(QString::fromUtf8(detail));
@@ -189,7 +193,7 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
         return;
     const qint64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (!finalSnapshot && now - channel.lastDeliveryLogMs < 5000)
+    if (!finalSnapshot && now - channel.lastDeliveryLogMs < kDeliveryLogIntervalMs)
         return;
 
     const auto count = [](uint64_t value) { return QString::number(static_cast<qulonglong>(value)); };

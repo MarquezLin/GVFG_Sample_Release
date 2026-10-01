@@ -1,16 +1,14 @@
 #pragma once
 
 #include <gvfg_capture.h>
+#include <gvfg_audio_playback.h>
 
 #include <QString>
 
-#include <atomic>
-#include <condition_variable>
+#include <chrono>
 #include <cstdint>
-#include <deque>
 #include <functional>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 class AudioPlayback final
@@ -33,25 +31,22 @@ public:
 
     void start(int channel, const gvfg_audio_format_t &format, LogCallback logCallback);
     void stop();
-    bool enqueue(std::vector<uint8_t> pcm);
+    bool enqueue(std::vector<uint8_t> pcm, uint64_t timestampNs);
+    void updateVideoTimestamp(uint64_t timestampNs);
+    void resetTimeline();
     void recordReceivedFrame();
     void recordReleaseFailure();
     Statistics statistics() const;
 
 private:
-    void playbackLoop();
-    void waitBeforeRetry();
-    void log(const QString &message) const;
-
-    static constexpr size_t kMaxQueuedFrames = 10;
+    gvfg_audio_playback_status_t startPlayerLocked();
 
     int channel_ = 0;
     gvfg_audio_format_t format_{};
     LogCallback logCallback_;
-    std::atomic<bool> stopRequested_{true};
-    std::thread thread_;
     mutable std::mutex mutex_;
-    std::condition_variable queueReady_;
-    std::deque<std::vector<uint8_t>> queue_;
+    gvfg_audio_player player_ = nullptr;
+    bool active_ = false;
+    std::chrono::steady_clock::time_point nextRetry_{};
     Statistics statistics_{};
 };
