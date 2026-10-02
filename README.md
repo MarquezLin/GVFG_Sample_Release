@@ -1,4 +1,4 @@
-# GVFG Qt Customer Sample 1.0.0
+# GVFG Qt Customer Sample
 
 This package contains a Qt application sample and the prebuilt GVFG SDK files required to compile it.
 
@@ -31,3 +31,15 @@ src/      Qt sample application source
 ```
 
 The sample demonstrates device enumeration, channel start/stop, signal events, video preview, zero-copy selection, output-format selection, and optional audio monitoring through the public GVFG APIs.
+
+## Release packaging
+
+Run `package_release.bat` after manually building the Release application in Qt Creator.
+The default executable is `build/Desktop_Qt_6_10_2_MSVC2022_64bit-Release/bin/gvfg_qt_preview.exe`.
+The script never builds the application or searches other build directories.
+It packages the public SDK DLLs from `bin/` and rejects internal diagnostic exports/imports.
+For a different kit, pass the executable and matching Qt bin directory explicitly:
+
+```bat
+package_release.bat "<application.exe>" "<Qt-bin>" "<output-directory>"
+```
