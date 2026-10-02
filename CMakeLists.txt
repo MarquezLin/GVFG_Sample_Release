@@ -19,7 +19,7 @@ if (NOT WIN32)
   message(FATAL_ERROR "GVFG Qt Sample currently supports Windows only.")
 endif()
 
-set(GVFG_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../GVFG_Standalone/GVFG_SDK"
+set(GVFG_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../GVFG_Standalone/GVFG_SDK"
     CACHE PATH "GVFG SDK source root containing public headers")
 set(_GVFG_DEFAULT_RELEASE_DIR
     "${GVFG_SDK_ROOT}/build/Desktop_Qt_6_10_2_MSVC2022_64bit-Release")
