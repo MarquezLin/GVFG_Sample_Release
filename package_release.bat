@@ -83,21 +83,14 @@ if not exist "%ROOT%\bin\gvfg_audio_playback.dll" (
     exit /b 1
 )
 
-rem Fail closed: customer packages must not contain internal diagnostic APIs.
+rem Shared SDK may export diagnostics; the customer application must not use them.
 where dumpbin >nul 2>nul
 if errorlevel 1 (
     echo ERROR: dumpbin was not found. Run from an x64 Visual Studio command prompt.
     exit /b 1
 )
-dumpbin /nologo /exports "%ROOT%\bin\gvfg.dll" >nul 2>nul
-if errorlevel 1 exit /b 1
 dumpbin /nologo /imports "%APP_EXE%" >nul 2>nul
 if errorlevel 1 exit /b 1
-dumpbin /nologo /exports "%ROOT%\bin\gvfg.dll" | findstr /C:"gvfg_debug_" >nul
-if not errorlevel 1 (
-    echo ERROR: Internal diagnostic exports found in customer SDK.
-    exit /b 1
-)
 dumpbin /nologo /imports "%APP_EXE%" | findstr /C:"gvfg_debug_" >nul
 if not errorlevel 1 (
     echo ERROR: Internal diagnostic imports found in customer application.

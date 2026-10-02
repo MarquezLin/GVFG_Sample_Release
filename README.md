@@ -37,7 +37,8 @@ The sample demonstrates device enumeration, channel start/stop, signal events, v
 Run `package_release.bat` after manually building the Release application in Qt Creator.
 The default executable is `build/Desktop_Qt_6_10_2_MSVC2022_64bit-Release/bin/gvfg_qt_preview.exe`.
 The script never builds the application or searches other build directories.
-It packages the public SDK DLLs from `bin/` and rejects internal diagnostic exports/imports.
+It packages the shared Release SDK DLLs from `bin/` and rejects diagnostic imports in the customer EXE.
+The SDK DLL may export diagnostic APIs, but this package contains only public headers (no `gvfg_debug.h`).
 For a different kit, pass the executable and matching Qt bin directory explicitly:
 
 ```bat
