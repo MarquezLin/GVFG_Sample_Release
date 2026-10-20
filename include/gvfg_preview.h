@@ -1,24 +1,16 @@
 #pragma once
 
 /*
- * Optional GVFG preview helper API.
+ * Internal GVFG preview output backend.
  *
- * Standalone preview helper. Applications provide the frame buffer, pixel
- * format, and row stride explicitly; gvfg_preview.dll does not depend on
- * gvfg.dll.
+ * Static preview backend. The playback core provides the frame buffer, pixel
+ * format, and row stride explicitly. This backend does not depend on gvfg.dll.
  */
 
 #include <stdint.h>
 
-#ifdef _WIN32
-#ifdef GVFG_PREVIEW_BUILD
-#define GVFG_PREVIEW_API __declspec(dllexport)
-#else
-#define GVFG_PREVIEW_API __declspec(dllimport)
-#endif
-#else
+/* Internal static backend: functions are not exported by the playback DLL. */
 #define GVFG_PREVIEW_API
-#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -42,7 +34,11 @@ typedef enum
     GVFG_PREVIEW_PIXFMT_GRAY16 = 4,
 
     /* Four interleaved 16-bit UNORM components per pixel: R, G, B, A. */
-    GVFG_PREVIEW_PIXFMT_RGBA16 = 5
+    GVFG_PREVIEW_PIXFMT_RGBA16 = 5,
+
+    /* DICOM native YBR_FULL_422: four 16-bit words per pixel pair,
+     * ordered Y0, Y1, Cb, Cr.  Values are right-aligned to bit_depth. */
+    GVFG_PREVIEW_PIXFMT_DICOM_YBR_FULL_422 = 6
 } gvfg_preview_pixel_format_t;
 
 typedef struct

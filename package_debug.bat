@@ -4,8 +4,8 @@ setlocal EnableExtensions
 set "PROJECT_DIR=%~dp0"
 set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
-if not defined SDK_SOURCE_BIN set "SDK_SOURCE_BIN=%PROJECT_DIR%\..\..\GVFG_Standalone\GVFG_SDK\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Release\bin"
 if not defined SAMPLE_SOURCE_BIN set "SAMPLE_SOURCE_BIN=%PROJECT_DIR%\build\Desktop_Qt_6_10_2_MSVC2022_64bit-Debug\bin"
+if not defined SDK_SOURCE_BIN set "SDK_SOURCE_BIN=%SAMPLE_SOURCE_BIN%"
 if not defined QT_BIN set "QT_BIN=C:\Qt\6.10.2\msvc2022_64\bin"
 if not defined VSDEVCMD set "VSDEVCMD=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"
 
@@ -44,12 +44,8 @@ if not exist "%SDK_SOURCE_BIN%\gvfg.dll" (
     echo [package] ERROR: gvfg.dll not found.
     goto fail
 )
-if not exist "%SDK_SOURCE_BIN%\gvfg_preview.dll" (
-    echo [package] ERROR: gvfg_preview.dll not found.
-    goto fail
-)
-if not exist "%SDK_SOURCE_BIN%\gvfg_audio_playback.dll" (
-    echo [package] ERROR: gvfg_audio_playback.dll not found.
+if not exist "%SDK_SOURCE_BIN%\gvfg_playback.dll" (
+    echo [package] ERROR: gvfg_playback.dll not found.
     goto fail
 )
 if not exist "%WINDEPLOYQT%" (
@@ -64,11 +60,10 @@ mkdir "%STAGE_DIR%" || goto fail
 echo [package] Copy application files and debug symbols...
 copy /Y "%SAMPLE_SOURCE_BIN%\gvfg_qt_preview.exe" "%STAGE_DIR%\" >nul || goto fail
 copy /Y "%SDK_SOURCE_BIN%\gvfg.dll" "%STAGE_DIR%\" >nul || goto fail
-copy /Y "%SDK_SOURCE_BIN%\gvfg_preview.dll" "%STAGE_DIR%\" >nul || goto fail
-copy /Y "%SDK_SOURCE_BIN%\gvfg_audio_playback.dll" "%STAGE_DIR%\" >nul || goto fail
+copy /Y "%SDK_SOURCE_BIN%\gvfg_playback.dll" "%STAGE_DIR%\" >nul || goto fail
 if exist "%SAMPLE_SOURCE_BIN%\gvfg_qt_preview.pdb" copy /Y "%SAMPLE_SOURCE_BIN%\gvfg_qt_preview.pdb" "%STAGE_DIR%\" >nul || goto fail
 if exist "%SDK_SOURCE_BIN%\gvfg.pdb" copy /Y "%SDK_SOURCE_BIN%\gvfg.pdb" "%STAGE_DIR%\" >nul || goto fail
-if exist "%SDK_SOURCE_BIN%\gvfg_preview.pdb" copy /Y "%SDK_SOURCE_BIN%\gvfg_preview.pdb" "%STAGE_DIR%\" >nul || goto fail
+if exist "%SDK_SOURCE_BIN%\gvfg_playback.pdb" copy /Y "%SDK_SOURCE_BIN%\gvfg_playback.pdb" "%STAGE_DIR%\" >nul || goto fail
 
 echo [package] Deploy Qt Debug runtime...
 if exist "%VSDEVCMD%" call "%VSDEVCMD%" -arch=x64 >nul || goto fail

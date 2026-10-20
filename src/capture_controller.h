@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio_playback.h"
+#include "playback.h"
 
 #if GVFG_INTERNAL_DIAGNOSTICS
 #include "internal_diagnostics.h"
@@ -66,6 +66,7 @@ signals:
     void previewCloseRequested(int channel);
 
 private:
+    static bool isValidChannel(int channel);
     bool openDevice();
     bool applyOutputFormat(int channel);
     bool prepareAudio(int channel);
@@ -79,11 +80,10 @@ private:
         bool requestedAudio = false;
         gvfg_pixel_format_t requestedFormat = GVFG_PIXFMT_YUY2;
         void *previewTarget = nullptr;
-        gvfg_preview_handle previewHandle = nullptr;
         std::atomic<bool> running{false}, stopRequested{false}, signalConnected{false};
         std::atomic<bool> frameAvailable{false}, previewVisible{false}, captureThreadExited{true};
         std::thread captureThread, audioThread;
-        AudioPlayback audioPlayback;
+        Playback playback;
         bool audioEnabled = false;
         gvfg_audio_format_t audioFormat{};
         std::atomic<uint64_t> videoFailed{0};
@@ -100,6 +100,7 @@ private:
 
     void reportError(const QString &apiName, gvfg_status_t status, int channel = -1);
     void appendLog(const QString &message);
+    void postLog(const QString &message);
     bool openChannel(int channel);
     void refreshSdiInfo(int channel);
 #if GVFG_INTERNAL_DIAGNOSTICS

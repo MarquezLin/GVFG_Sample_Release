@@ -3,6 +3,10 @@
 #include <QMetaObject>
 #include <QStringList>
 
+#if GVFG_INTERNAL_DIAGNOSTICS
+#include <gvfg_debug.h>
+#endif
+
 #include <chrono>
 #include <cstddef>
 
@@ -92,6 +96,7 @@ void CaptureController::updateSignalStatus(bool queryHardware)
             gvfg_signal_status_t signal{};
             if (gvfg_get_channel_signal_status(handle_, channelIndex, &signal) == GVFG_OK)
             {
+                channel.signalConnected.store(signal.connected != 0, std::memory_order_release);
                 channel.cachedSignalStatus = signal;
                 channel.haveCachedSignalStatus = true;
             }
@@ -104,7 +109,7 @@ void CaptureController::updateSignalStatus(bool queryHardware)
 
         const gvfg_signal_status_t &signal = channel.cachedSignalStatus;
         const QString inputStatus = signal.connected
-                                        ? QStringLiteral("CH%1 [SDK] Video Locked | %2")
+                                        ? QStringLiteral("CH%1 [SDK] Input connected (SDK state) | %2")
                                               .arg(channelIndex).arg(signalFrameText(signal))
                                         : QStringLiteral("CH%1 [SDK] Video Undetected").arg(channelIndex);
         if (inputStatus != channel.lastLoggedInputStatus)
@@ -116,12 +121,10 @@ void CaptureController::updateSignalStatus(bool queryHardware)
             emit previewSourceSizeChanged(channelIndex, signal.width, signal.height);
 
         gvfg_preview_info_t previewInfo{};
-        const bool previewInfoOk = channel.previewHandle &&
-            gvfg_preview_get_info(channel.previewHandle, &previewInfo) == GVFG_PREVIEW_OK &&
+        const bool previewInfoOk = channel.playback.previewInfo(&previewInfo) == GVFG_PLAYBACK_OK &&
             previewInfo.active;
         gvfg_preview_stats_t previewStats{};
-        const bool previewStatsOk = channel.previewHandle &&
-            gvfg_preview_get_stats(channel.previewHandle, &previewStats) == GVFG_PREVIEW_OK;
+        const bool previewStatsOk = channel.playback.previewStats(&previewStats) == GVFG_PLAYBACK_OK;
         const QString previewFps = previewStatsOk && previewStats.present_fps > 0.0
                                        ? QString::number(previewStats.present_fps, 'f', 2)
                                        : QStringLiteral("--");
@@ -137,7 +140,7 @@ void CaptureController::updateSignalStatus(bool queryHardware)
                                 channel.zeroCopy ? QStringLiteral("Zero-copy") : QStringLiteral("Copy"));
         if (channel.audioEnabled)
         {
-            const AudioPlayback::Statistics audioStats = channel.audioPlayback.statistics();
+            const Playback::Statistics audioStats = channel.playback.statistics();
             statusLines << QStringLiteral("CH%1 Audio | %2 Hz %3 ch %4-bit | received=%5 frames")
                                .arg(channelIndex)
                                .arg(channel.audioFormat.sample_rate)
@@ -147,6 +150,13 @@ void CaptureController::updateSignalStatus(bool queryHardware)
         }
         statusLines << QStringLiteral("CH%1 Preview | %2 FPS | %3")
                            .arg(channelIndex).arg(previewFps, previewFrame);
+#if GVFG_INTERNAL_DIAGNOSTICS
+        if (channel.audioEnabled)
+            internalDiagnostics_.appendAudioStatusLine(
+                statusLines, handle_, channelIndex, channel.playback.statistics().receivedFrames);
+        internalDiagnostics_.appendVideoStatusLines(
+            statusLines, handle_, channelIndex, channel.zeroCopy);
+#endif
         logDeliveryStatus(channelIndex);
     }
 
@@ -172,6 +182,18 @@ void CaptureController::reportError(const QString &apiName, gvfg_status_t status
             detail[0] != '\0')
             message += QStringLiteral(" | %1").arg(QString::fromUtf8(detail));
     }
+#if GVFG_INTERNAL_DIAGNOSTICS
+    if (handle_ != nullptr && isValidChannel(channel))
+    {
+        gvfg_debug_backend_stats_t stats{};
+        if (gvfg_debug_get_channel_backend_stats(handle_, channel, &stats) == GVFG_OK &&
+            stats.last_vendor_error_code != 0)
+            message += QStringLiteral(" | [LIB] %1 returned %2 (%3)")
+                           .arg(QString::fromUtf8(stats.last_vendor_api),
+                                QString::fromUtf8(stats.last_vendor_error_name))
+                           .arg(stats.last_vendor_error_code);
+    }
+#endif
     appendLog(message);
 }
 
@@ -198,11 +220,10 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
 
     const auto count = [](uint64_t value) { return QString::number(static_cast<qulonglong>(value)); };
     gvfg_preview_delivery_stats_t previewStats{};
-    const bool previewOk = channel.previewHandle &&
-        gvfg_preview_get_delivery_stats(channel.previewHandle, &previewStats) == GVFG_PREVIEW_OK;
+    const bool previewOk = channel.playback.deliveryStats(&previewStats) == GVFG_PLAYBACK_OK;
     const uint64_t failed =
         (previewOk ? previewStats.failed - channel.previewBaseline.failed : 0) + channel.videoFailed.load();
-    const AudioPlayback::Statistics audioStats = channel.audioPlayback.statistics();
+    const Playback::Statistics audioStats = channel.playback.statistics();
 
     if (failed != channel.lastLoggedPreviewFailures)
         appendLog(QStringLiteral("CH%1 [APP] ERROR preview submission | failures=%2")
@@ -211,14 +232,18 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
         appendLog(QStringLiteral("CH%1 [SDK API] ERROR audio frame release | failed_frames=%2")
                       .arg(QString::number(channelIndex), count(audioStats.releaseFailedFrames)));
     if (audioStats.outputFailedFrames != channel.lastLoggedAudioOutputFailures)
-        appendLog(QStringLiteral("CH%1 [APP] ERROR audio output write | failed_frames=%2")
+        appendLog(QStringLiteral("CH%1 [APP] ERROR audio playback submission | failed_frames=%2")
                       .arg(QString::number(channelIndex), count(audioStats.outputFailedFrames)));
 
-    if (finalSnapshot || failed != channel.lastLoggedPreviewFailures ||
-        audioStats.releaseFailedFrames != channel.lastLoggedAudioReleaseFailures ||
-        audioStats.outputFailedFrames != channel.lastLoggedAudioOutputFailures)
-        channel.lastDeliveryLogMs = now;
+    channel.lastDeliveryLogMs = now;
     channel.lastLoggedPreviewFailures = failed;
     channel.lastLoggedAudioReleaseFailures = audioStats.releaseFailedFrames;
     channel.lastLoggedAudioOutputFailures = audioStats.outputFailedFrames;
 }
+
+#if GVFG_INTERNAL_DIAGNOSTICS
+void CaptureController::writeDiagnosticSnapshot(const QString &statusText)
+{
+    emit diagnosticMessage(statusText);
+}
+#endif

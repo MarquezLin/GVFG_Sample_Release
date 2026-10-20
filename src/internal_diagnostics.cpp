@@ -113,8 +113,8 @@ QString InternalDiagnostics::takeStartupLatencyLine(int channel,
                                .count();
     return QStringLiteral("CH%1 Startup latency | Start -> start_channel return=%2 ms | "
                           "first read_frame call -> return=%3 ms | "
-                          "first render_frame call -> return=%4 ms | "
-                          "Start -> first render_frame return=%5 ms | SDK_frame_id=%6")
+                          "first playback submit_video call -> return=%4 ms | "
+                          "Start -> first submit_video return=%5 ms | SDK_frame_id=%6")
         .arg(channel)
         .arg(metrics.startCallMs, 0, 'f', 3)
         .arg(firstReadMs, 0, 'f', 3)
