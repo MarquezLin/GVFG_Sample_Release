@@ -70,16 +70,14 @@ if "%~3"=="" (
     set "OUTPUT_DIR=%~f3"
 )
 
-if not exist "%ROOT%\bin\gvfg.dll" (
-    echo ERROR: GVFG runtime was not found: "%ROOT%\bin\gvfg.dll"
+for %%I in ("%APP_EXE%") do set "APP_BIN=%%~dpI"
+
+if not exist "%APP_BIN%gvfg.dll" (
+    echo ERROR: GVFG runtime was not found: "%APP_BIN%gvfg.dll"
     exit /b 1
 )
-if not exist "%ROOT%\bin\gvfg_preview.dll" (
-    echo ERROR: GVFG preview runtime was not found: "%ROOT%\bin\gvfg_preview.dll"
-    exit /b 1
-)
-if not exist "%ROOT%\bin\gvfg_audio_playback.dll" (
-    echo ERROR: GVFG audio playback runtime was not found: "%ROOT%\bin\gvfg_audio_playback.dll"
+if not exist "%APP_BIN%gvfg_playback.dll" (
+    echo ERROR: GVFG playback runtime was not found: "%APP_BIN%gvfg_playback.dll"
     exit /b 1
 )
 
@@ -108,9 +106,8 @@ if exist "%STAGE_ROOT%" rmdir /S /Q "%STAGE_ROOT%" || goto fail
 mkdir "%STAGE_DIR%" || goto fail
 
 copy /Y "%APP_EXE%" "%STAGE_DIR%\gvfg_qt_preview.exe" >nul || goto fail
-copy /Y "%ROOT%\bin\gvfg.dll" "%STAGE_DIR%\gvfg.dll" >nul || goto fail
-copy /Y "%ROOT%\bin\gvfg_preview.dll" "%STAGE_DIR%\gvfg_preview.dll" >nul || goto fail
-copy /Y "%ROOT%\bin\gvfg_audio_playback.dll" "%STAGE_DIR%\gvfg_audio_playback.dll" >nul || goto fail
+copy /Y "%APP_BIN%gvfg.dll" "%STAGE_DIR%\gvfg.dll" >nul || goto fail
+copy /Y "%APP_BIN%gvfg_playback.dll" "%STAGE_DIR%\gvfg_playback.dll" >nul || goto fail
 
 "%WINDEPLOYQT%" --release --compiler-runtime --force --dir "%STAGE_DIR%" "%STAGE_DIR%\gvfg_qt_preview.exe"
 if errorlevel 1 goto fail
