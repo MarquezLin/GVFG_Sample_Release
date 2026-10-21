@@ -76,6 +76,9 @@ typedef struct {
     int64_t av_difference_ns;   /* audio - video; valid only with both clocks. */
     double audio_rate_ratio;
     uint64_t video_dropped; /* Late or GPU-busy preview frames; never audio/recording loss. */
+    int sync_degraded;      /* Independent best-effort playback; capture may continue. */
+    uint64_t sync_fallbacks;
+    uint64_t audio_dropped_frames; /* PCM frames discarded from the core queue, not device padding. */
 } gvfg_playback_stats_t;
 
 GVFG_PLAYBACK_API void gvfg_playback_default_config(gvfg_playback_config_t *config);
@@ -84,11 +87,14 @@ GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_create(gvfg_playback *out
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_attach_window(gvfg_playback p, void *hwnd);
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_start(gvfg_playback p, const gvfg_playback_config_t *config);
 /* Monotonic timestamps required per stream. Zero/reversed timestamps rejected.
- * EQUEUE_FULL means NOT accepted: stop/report, or release the SDK frame and
- * retry an application-owned copy. Never block capture holding an SDK frame.
+ * Queue pressure triggers bounded best-effort playback; obsolete queued data
+ * may be discarded even on OK. Never block capture holding an SDK frame.
+ * A single packet/frame exceeding its configured capacity returns EINVAL.
  * Each PCM submission must contain at most 100 ms of audio.
  * Audio timestamp is SDK DELIVERY time. The first PCM sample is estimated by
- * subtracting packet duration; following PCM uses a continuous sample timeline.
+ * subtracting packet duration. Following PCM remains continuous while its
+ * source-time mapping smoothly tracks long-term delivery-clock differences.
+ * Forward audio delivery gaps recover automatically in best-effort playback.
  * Delivery timestamps cannot recover unknown hardware latency or lost samples.
  */
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_submit_video(gvfg_playback p, const gvfg_playback_video_frame_t *frame);
@@ -98,6 +104,11 @@ GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_submit_video(gvfg_playbac
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_present_image(gvfg_playback p, const gvfg_preview_frame_t *image);
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_submit_audio(gvfg_playback p, const void *pcm, uint32_t bytes, uint64_t timestamp_ns);
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_set_volume(gvfg_playback p, float gain);
+/* Default enabled=1. Set 0 for independent best-effort playback with no
+ * automatic return to synchronization. May be called before start or while
+ * active. Re-enabling waits for stable input/output before synchronizing.
+ * This choice persists across stop/start and reset_timeline. */
+GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_set_sync_enabled(gvfg_playback p, int enabled);
 /* Explicit discontinuity: discards pending output and establishes a new epoch.
  * Stop/reset discard queued data; they are NOT lossless end-of-stream drains. */
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_reset_timeline(gvfg_playback p);

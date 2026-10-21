@@ -2,6 +2,12 @@
 
 #include <algorithm>
 
+namespace {
+uint64_t counterDelta(uint64_t value, uint64_t baseline) {
+    return value >= baseline ? value - baseline : 0;
+}
+}
+
 #if GVFG_INTERNAL_DIAGNOSTICS
 #include <gvfg_debug.h>
 #endif
@@ -29,6 +35,8 @@ void InternalDiagnostics::resetChannel(gvfg_handle handle, int channel)
         return;
 
     baselines_[channel] = {};
+    baselines_[channel].warmupStart = std::chrono::steady_clock::now();
+    lastAudioReceived_[channel] = 0;
     ChannelMetrics &metrics = metrics_[channel];
     metrics.successfulFrames = 0;
     metrics.windowSamples = 0;
@@ -40,24 +48,32 @@ void InternalDiagnostics::resetChannel(gvfg_handle handle, int channel)
     metrics.readMaximumMs.store(0.0, std::memory_order_relaxed);
     metrics.readWindowMaximumMs.store(0.0, std::memory_order_relaxed);
 
-#if GVFG_INTERNAL_DIAGNOSTICS
-    gvfg_debug_backend_stats_t stats{};
-    if (handle != nullptr &&
-        gvfg_debug_get_channel_backend_stats(handle, channel, &stats) == GVFG_OK)
-    {
-        baselines_[channel] = {
-            stats.video_dma_event_wakes,
-            stats.extra_video_event_wakes,
-            stats.video_frames_from_lib,
-            stats.audio_dma_event_wakes,
-            stats.extra_audio_event_wakes,
-            stats.audio_frames_from_lib,
-            stats.audio_driver_frame_count};
-    }
-#else
     (void)handle;
-#endif
 }
+
+#if GVFG_INTERNAL_DIAGNOSTICS
+bool InternalDiagnostics::prepareCounters(const gvfg_debug_backend_stats_t &s, int channel) const
+{
+    auto &b = baselines_[channel];
+    if (std::chrono::steady_clock::now() - b.warmupStart < std::chrono::seconds(3))
+        return false;
+    const bool reset = s.video_dma_event_wakes < b.videoDmaEventWakes ||
+        s.extra_video_event_wakes < b.extraVideoEventWakes || s.video_frames_from_lib < b.videoFramesFromLibrary ||
+        s.audio_dma_event_wakes < b.audioDmaEventWakes || s.extra_audio_event_wakes < b.extraAudioEventWakes ||
+        s.audio_frames_from_lib < b.audioFramesFromLibrary ||
+        (s.audio_driver_frame_count_valid && (!b.driverValid || s.audio_driver_frame_count < b.audioDriverFrameCount));
+    if (!b.ready || reset) {
+        b.videoDmaEventWakes = s.video_dma_event_wakes; b.extraVideoEventWakes = s.extra_video_event_wakes;
+        b.videoFramesFromLibrary = s.video_frames_from_lib; b.audioDmaEventWakes = s.audio_dma_event_wakes;
+        b.extraAudioEventWakes = s.extra_audio_event_wakes; b.audioFramesFromLibrary = s.audio_frames_from_lib;
+        b.audioDriverFrameCount = s.audio_driver_frame_count; b.driverValid = s.audio_driver_frame_count_valid != 0;
+        b.audioReceived = lastAudioReceived_[channel];
+        b.videoReceived = metrics_[channel].videoReceived.load(std::memory_order_relaxed);
+        b.ready = true;
+    }
+    return true;
+}
+#endif
 
 void InternalDiagnostics::recordVideoRead(int channel, double elapsedMs)
 {
@@ -136,10 +152,12 @@ void InternalDiagnostics::appendAudioStatusLine(QStringList &lines,
     if (gvfg_debug_get_channel_backend_stats(handle, channel, &stats) != GVFG_OK)
         return;
 
+    lastAudioReceived_[channel] = audioReceived;
+    const bool ready = prepareCounters(stats, channel);
     const BackendBaseline &baseline = baselines_[channel];
-    const QString driverFrames = stats.audio_driver_frame_count_valid
+    const QString driverFrames = !ready ? QStringLiteral("warming up (3 s)") : stats.audio_driver_frame_count_valid
         ? QString::number(static_cast<qulonglong>(
-              stats.audio_driver_frame_count - baseline.audioDriverFrameCount))
+              counterDelta(stats.audio_driver_frame_count, baseline.audioDriverFrameCount)))
         : QStringLiteral("unavailable");
     lines << QStringLiteral("CH%1 Audio State | enabled=%2 running=%3 | event DMA=%4 Extra=%5 | driver_frames=%6")
                  .arg(channel)
@@ -148,12 +166,16 @@ void InternalDiagnostics::appendAudioStatusLine(QStringList &lines,
                  .arg(stats.audio_frame_event_valid ? QStringLiteral("valid") : QStringLiteral("NULL"))
                  .arg(stats.audio_extra_event_valid ? QStringLiteral("valid") : QStringLiteral("NULL"))
                  .arg(driverFrames);
+    if (!ready) {
+        lines << QStringLiteral("CH%1 Audio Debug | warming up (3 s)").arg(channel);
+        return;
+    }
     lines << QStringLiteral("CH%1 Audio Debug | LIB events DMA=%2 Extra=%3 | LIB->SDK %4 frames | SDK->APP %5 frames")
                  .arg(channel)
-                 .arg(static_cast<qulonglong>(stats.audio_dma_event_wakes - baseline.audioDmaEventWakes))
-                 .arg(static_cast<qulonglong>(stats.extra_audio_event_wakes - baseline.extraAudioEventWakes))
-                 .arg(static_cast<qulonglong>(stats.audio_frames_from_lib - baseline.audioFramesFromLibrary))
-                 .arg(static_cast<qulonglong>(audioReceived));
+                 .arg(static_cast<qulonglong>(counterDelta(stats.audio_dma_event_wakes, baseline.audioDmaEventWakes)))
+                 .arg(static_cast<qulonglong>(counterDelta(stats.extra_audio_event_wakes, baseline.extraAudioEventWakes)))
+                 .arg(static_cast<qulonglong>(counterDelta(stats.audio_frames_from_lib, baseline.audioFramesFromLibrary)))
+                 .arg(static_cast<qulonglong>(counterDelta(audioReceived, baseline.audioReceived)));
 #else
     (void)lines;
     (void)handle;
@@ -186,8 +208,8 @@ void InternalDiagnostics::appendVideoStatusLines(QStringList &lines,
     if (gvfg_debug_get_channel_backend_stats(handle, channel, &stats) != GVFG_OK)
         return;
 
+    const bool ready = prepareCounters(stats, channel);
     const BackendBaseline &baseline = baselines_[channel];
-
     lines << (stats.get_frame_timing_samples >= 300
                   ? QStringLiteral("CH%1 %2 | avg=%3 max300=%4 max=%5 us samples=%6")
                         .arg(channel)
@@ -199,12 +221,16 @@ void InternalDiagnostics::appendVideoStatusLines(QStringList &lines,
                         .arg(stats.get_frame_timing_max_us, 0, 'f', 3)
                         .arg(static_cast<qulonglong>(stats.get_frame_timing_samples))
                   : QStringLiteral("CH%1 [LIB] GetVideoFrame | measuring").arg(channel));
+    if (!ready) {
+        lines << QStringLiteral("CH%1 Video Debug | warming up (3 s)").arg(channel);
+        return;
+    }
     lines << QStringLiteral("CH%1 Video Debug | LIB events DMA=%2 Extra=%3 | LIB->SDK %4 frames | SDK->APP %5 frames")
                  .arg(channel)
-                 .arg(static_cast<qulonglong>(stats.video_dma_event_wakes - baseline.videoDmaEventWakes))
-                 .arg(static_cast<qulonglong>(stats.extra_video_event_wakes - baseline.extraVideoEventWakes))
-                 .arg(static_cast<qulonglong>(stats.video_frames_from_lib - baseline.videoFramesFromLibrary))
-                 .arg(static_cast<qulonglong>(metrics.videoReceived.load(std::memory_order_relaxed)));
+                 .arg(static_cast<qulonglong>(counterDelta(stats.video_dma_event_wakes, baseline.videoDmaEventWakes)))
+                 .arg(static_cast<qulonglong>(counterDelta(stats.extra_video_event_wakes, baseline.extraVideoEventWakes)))
+                 .arg(static_cast<qulonglong>(counterDelta(stats.video_frames_from_lib, baseline.videoFramesFromLibrary)))
+                 .arg(static_cast<qulonglong>(counterDelta(metrics.videoReceived.load(std::memory_order_relaxed), baseline.videoReceived)));
 #else
     (void)lines;
     (void)handle;

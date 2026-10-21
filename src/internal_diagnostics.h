@@ -1,6 +1,9 @@
 #pragma once
 
 #include <gvfg_capture.h>
+#if GVFG_INTERNAL_DIAGNOSTICS
+#include <gvfg_debug.h>
+#endif
 
 #include <QStringList>
 
@@ -39,6 +42,11 @@ private:
         uint64_t extraAudioEventWakes = 0;
         uint64_t audioFramesFromLibrary = 0;
         uint64_t audioDriverFrameCount = 0;
+        uint64_t audioReceived = 0;
+        uint64_t videoReceived = 0;
+        std::chrono::steady_clock::time_point warmupStart{};
+        bool ready = false;
+        bool driverValid = false;
     };
 
     struct ChannelMetrics
@@ -56,6 +64,10 @@ private:
         std::atomic<double> readWindowMaximumMs{0.0};
     };
 
-    std::array<BackendBaseline, 2> baselines_{};
+#if GVFG_INTERNAL_DIAGNOSTICS
+    bool prepareCounters(const gvfg_debug_backend_stats_t &stats, int channel) const;
+#endif
+    mutable std::array<BackendBaseline, 2> baselines_{};
+    mutable std::array<uint64_t, 2> lastAudioReceived_{};
     std::array<ChannelMetrics, 2> metrics_{};
 };

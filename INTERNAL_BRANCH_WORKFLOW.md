@@ -23,6 +23,10 @@ remote. This branch is intended for local or company-internal storage only.
 
 - Select the Qt Creator **Debug** configuration. The sample version is
   `1.0.3-internal`; `GVFG_INTERNAL_DIAGNOSTICS` is enabled only for Debug.
+- Playback synchronization is enabled in Internal Debug and disabled in
+  customer builds. The sample sets this choice through the public
+  `gvfg_playback_set_sync_enabled()` API before each start; the SDK API still
+  defaults to synchronization enabled for other applications.
 - By default this checkout builds the sibling `GVFG_Standalone/GVFG_SDK` sources
   together with the sample, including `gvfg.dll` and `gvfg_playback.dll`.
   Use the MSVC x64 Qt kit for the supplied vendor static library.
@@ -37,3 +41,8 @@ remote. This branch is intended for local or company-internal storage only.
 - Startup timing measures playback submission acceptance, not actual display
   presentation. HDMI's temporary SDK Lock bypass makes `connected` an effective
   SDK state and does not prove physical HDMI lock.
+- Internal driver/LIB/SDK debug counters warm up for three seconds before
+  establishing their shared baseline. A counter reset establishes a new
+  baseline rather than displaying an unsigned subtraction wraparound.
+  The ordinary Audio received count still covers the whole capture session;
+  Read/GetVideoFrame timing metrics retain their own measurement windows.

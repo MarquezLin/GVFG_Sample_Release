@@ -13,7 +13,10 @@ bool Playback::start(int channel, const gvfg_audio_format_t &format, bool audio,
     gvfg_playback_config_t config{}; gvfg_playback_default_config(&config);
     config.mode = audio ? GVFG_PLAYBACK_AUDIO_VIDEO : GVFG_PLAYBACK_VIDEO_ONLY;
     config.audio_format = {format.sample_rate, static_cast<uint16_t>(format.channels), static_cast<uint16_t>(format.bits_per_sample)};
-    const auto status = gvfg_playback_start(player_, &config);
+    // Internal diagnostics exercise synchronization; customer builds use
+    // independent playback unless the application explicitly opts in.
+    auto status = gvfg_playback_set_sync_enabled(player_, GVFG_INTERNAL_DIAGNOSTICS ? 1 : 0);
+    if (status == GVFG_PLAYBACK_OK) status = gvfg_playback_start(player_, &config);
     if (status != GVFG_PLAYBACK_OK && log_) log_(QStringLiteral("CH%1 [PLAYBACK] start failed | %2").arg(channel_).arg(QString::fromUtf8(gvfg_playback_strerror(status))));
     return status == GVFG_PLAYBACK_OK;
 }
