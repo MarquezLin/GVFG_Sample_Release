@@ -1,6 +1,14 @@
 #include "playback.h"
 
 Playback::~Playback() { close(); }
+gvfg_playback_status_t Playback::setSignalConnected(bool connected) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!player_) {
+        const auto status = gvfg_playback_create(&player_);
+        if (status != GVFG_PLAYBACK_OK) return status;
+    }
+    return gvfg_playback_set_signal_connected(player_, connected ? 1 : 0);
+}
 bool Playback::attachWindow(void *hwnd) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!player_ && gvfg_playback_create(&player_) != GVFG_PLAYBACK_OK) return false;

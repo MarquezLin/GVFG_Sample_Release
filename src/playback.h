@@ -14,6 +14,7 @@ public:
     using LogCallback = std::function<void(const QString &)>;
     ~Playback();
     bool attachWindow(void *hwnd);
+    gvfg_playback_status_t setSignalConnected(bool connected);
     bool start(int channel, const gvfg_audio_format_t &format, bool audio, LogCallback log);
     void stop();
     void close();

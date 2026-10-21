@@ -108,6 +108,10 @@ void CaptureController::updateSignalStatus(bool queryHardware)
         }
 
         const gvfg_signal_status_t &signal = channel.cachedSignalStatus;
+        const auto cardStatus = channel.playback.setSignalConnected(signal.connected != 0);
+        if (cardStatus != GVFG_PLAYBACK_OK)
+            appendLog(QStringLiteral("CH%1 [PLAYBACK] signal state failed | %2")
+                .arg(channelIndex).arg(QString::fromUtf8(gvfg_playback_strerror(cardStatus))));
         const QString inputStatus = signal.connected
                                         ? QStringLiteral("CH%1 [SDK] Input connected (SDK state) | %2")
                                               .arg(channelIndex).arg(signalFrameText(signal))
@@ -138,6 +142,9 @@ void CaptureController::updateSignalStatus(bool queryHardware)
                                     ? QStringLiteral("Running") : QStringLiteral("Stopped"),
                                 signalFrameText(signal),
                                 channel.zeroCopy ? QStringLiteral("Zero-copy") : QStringLiteral("Copy"));
+        statusLines << QStringLiteral("CH%1 Video | received=%2 frames")
+                           .arg(channelIndex)
+                           .arg(static_cast<qulonglong>(channel.videoReceived.load()));
         if (channel.audioEnabled)
         {
             const Playback::Statistics audioStats = channel.playback.statistics();

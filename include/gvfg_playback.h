@@ -43,6 +43,7 @@ typedef enum {
     GVFG_PLAYBACK_MASTER_AUDIO = 1,
     GVFG_PLAYBACK_MASTER_VIDEO = 2
 } gvfg_playback_master_t;
+
 typedef struct {
     uint32_t struct_size;
     gvfg_playback_mode_t mode;
@@ -85,6 +86,11 @@ GVFG_PLAYBACK_API void gvfg_playback_default_config(gvfg_playback_config_t *conf
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_create(gvfg_playback *out);
 /* A null HWND hides video while preserving its timeline. Attach on HWND thread. */
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_attach_window(gvfg_playback p, void *hwnd);
+/* Forward Capture's signal.connected (0/1). The helper owns the NO SIGNAL
+ * overlay; it does not query Capture or infer signal from missing frames.
+ * Call on the attached HWND thread, serialized with attach/destroy.
+ * Default connected=1. State persists across stop/start/reset and reattach. */
+GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_set_signal_connected(gvfg_playback p, int connected);
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_start(gvfg_playback p, const gvfg_playback_config_t *config);
 /* Monotonic timestamps required per stream. Zero/reversed timestamps rejected.
  * Queue pressure triggers bounded best-effort playback; obsolete queued data

@@ -401,6 +401,7 @@ void CaptureController::startCapture(int channelIndex)
 
     channel.previewFailureCount = 0;
     channel.audioEnabled = audioEnabled;
+    channel.videoReceived = 0;
     channel.videoFailed = 0;
     channel.lastLoggedPreviewFailures = 0;
     channel.lastLoggedAudioReleaseFailures = channel.lastLoggedAudioOutputFailures = 0;
@@ -556,6 +557,8 @@ void CaptureController::captureReadLoop(int channelIndex)
 #endif
         if (st == GVFG_OK)
         {
+            // Finish using/copying the SDK-owned frame before releasing it.
+            ++channel.videoReceived;
 #if GVFG_INTERNAL_DIAGNOSTICS
             internalDiagnostics_.recordVideoRead(channelIndex, getFrameElapsedMs);
 #endif

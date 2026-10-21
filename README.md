@@ -1,73 +1,106 @@
-# GVFG Customer Sample
+# GVFG Internal Diagnostic Sample
 
-這個 Qt Demo 展示公開 Capture／Playback API 的使用：列舉裝置、開啟 channel、
-啟停、選擇 YUY2／Y210、copy／zero-copy、影像預覽與可選音訊。
-影音同步由 SDK 的 `gvfg_playback.dll` 負責。
-Customer Demo 預設關閉影音同步，影像與音訊各自播放。
-需要同步時，將啟動流程中 `gvfg_playback_set_sync_enabled()` 的參數改為 1。
+This internal Qt sample demonstrates the public Capture and Playback APIs: device enumeration,
+channel setup, start/stop, YUY2/Y210 selection, copy/zero-copy capture, video preview,
+and optional audio playback.
 
+The SDK's `gvfg_playback.dll` manages playback and synchronization. Debug builds enable
+A/V synchronization and internal diagnostics. Release builds use independent playback.
+Both configurations include the video reception counter and the helper-managed NO SIGNAL card.
 
-## 1. 環境
+## 1. Requirements
 
-- Windows 10／11 x64、相容的 GVFG driver 與硬體。
-- CMake 3.16+、Qt 6 Widgets 與相容 toolchain。
-- 同層 SDK source 模式需要 MSVC x64，以連結 supplied vendor 靜態 library。
-- Qt 模組只需 Widgets。
+- Windows 10/11 x64 with compatible GVFG drivers and capture hardware.
+- CMake 3.16 or newer.
+- Qt 6 Widgets and a compatible Windows x64 C++ toolchain.
+- No Qt Multimedia module is required.
+- Internal Debug diagnostics require the sibling SDK sources and MSVC x64.
 
-## 2. 套件內容與相依
+## 2. Package Contents and Dependencies
 
 ```text
-include/  gvfg_capture.h、gvfg_playback.h、gvfg_preview.h、gvfg_audio_playback.h
-bin/      gvfg.dll、gvfg_playback.dll
-lib/      gvfg.lib、gvfg_playback.lib（及對應 GNU 匯入庫）
-src/      Qt Demo source
+include/  gvfg_capture.h, gvfg_playback.h, gvfg_preview.h, gvfg_audio_playback.h
+bin/      gvfg.dll, gvfg_playback.dll
+lib/      gvfg.lib, gvfg_playback.lib, and GNU import libraries
+src/      Qt sample source
 ```
 
-連結 `gvfg.lib` 與 `gvfg_playback.lib`；執行時部署 `gvfg.dll` 與 `gvfg_playback.dll`。
-`gvfg_preview.h` 與 `gvfg_audio_playback.h` 提供 Playback 使用的資料型別。
+Link against `gvfg.lib` and `gvfg_playback.lib`, and deploy `gvfg.dll` and
+`gvfg_playback.dll` beside the executable. `gvfg_preview.h` and
+`gvfg_audio_playback.h` provide data types used by Playback.
 
-## 3. 建置方式
+The repository includes public SDK headers, import libraries, and DLLs. Internal
+Debug builds additionally use private headers from the sibling SDK source checkout.
+SDK updates must include matching headers, import libraries, and DLLs.
 
-在 Qt Creator 開啟此目錄的 CMakeLists.txt，選 Windows x64 Qt kit，或執行：
+## 3. Building
+
+Open this directory's `CMakeLists.txt` in Qt Creator and select a Windows x64 Qt kit,
+or run the following in a terminal configured for your compiler. Adjust the Qt path
+to match your installation:
 
 ```bat
 cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=C:/Qt/6.10.2/msvc2022_64
 cmake --build build_release --target gvfg_qt_preview
 ```
 
-若使用 Visual Studio 多組態 generator，改用對應 generator 並在 build 指定 `--config Release`。
+For a Visual Studio multi-configuration generator, select the appropriate generator
+and pass `--config Release` when building.
 
-SDK 選擇規則：有 GVFG_SAMPLE_SDK_BUILD_DIR 時使用該 build；否則找到同層
-GVFG_Standalone/GVFG_SDK 就一起建置 source；兩者都沒有才使用套件 include/bin/lib。
-要強制驗證套件來源，可 configure 時加 `-DGVFG_SAMPLE_SDK_SOURCE_DIR=`。
-明確使用其他 SDK 時，GVFG_SAMPLE_SDK_BUILD_DIR 與 GVFG_SAMPLE_SDK_SOURCE_DIR 必須指向配套版本。
+This internal branch defaults to the sibling `GVFG_Standalone/GVFG_SDK` source tree
+and builds matching SDK targets. Use `GVFG_SAMPLE_SDK_SOURCE_DIR` to select another
+SDK source tree. An explicit `GVFG_SAMPLE_SDK_BUILD_DIR` selects its prebuilt bin/lib;
+the headers must match that build. CMake copies the selected DLLs beside the executable.
 
-## 4. 從 source 看 API 用法
+Customer `master` independently defaults to the repository's packaged include/bin/lib.
 
-| 檔案 | 展示內容 |
+## 4. API Usage in the Source
+
+| File | Purpose |
 |---|---|
-| `src/playback.cpp` | create、attach、default_config、start、submit、reset、stop、destroy 的薄包裝 |
-| `src/capture_controller.cpp` | Capture lifecycle、video／audio read、先完成使用／複製再 release、事件處理 |
-| `src/capture_controller_status.cpp` | 公開訊號／格式／FPS 與基本 API 錯誤 |
-| `src/mainwindow.cpp`、`previewwindow.cpp` | UI、HWND 與預覽視窗生命週期 |
+| `src/playback.cpp` | Thin wrapper around create, attach, default_config, start, submit, reset, stop, and destroy |
+| `src/capture_controller.cpp` | Capture lifecycle, video/audio reads, frame release after use/copy, and event handling |
+| `src/capture_controller_status.cpp` | Signal/format/FPS display, received frame counts, and basic API errors |
+| `src/internal_diagnostics.cpp` | Debug-only backend counters, startup timing, diagnostic snapshots, and warmup/reset baselines |
+| `src/mainwindow.cpp`, `src/previewwindow.cpp` | UI, HWND, and preview window lifecycle |
 
-通常操作：選裝置及格式 → 選擇是否音訊 → Start → Stop。
-目前一般 UI 只顯示 CH0；不要從 SDK 支援兩條 channel 推論 Demo 已提供完整雙 channel UI。
-隱藏預覽不停止影像時間軸提交；影音模式仍需兩路資料。停止會 join read workers 並結束播放，再回收擷取資源。
+Typical operation: select a device and output format, choose whether to enable audio,
+then click Start and Stop. The UI exposes CH0; it does not provide a complete
+two-channel interface.
 
-Demo 顯示基本狀態、版本及 API 錯誤。
-需要完整使用流程、模式、ownership 與錯誤處理時，讀 [公開播放手冊](../../GVFG_Standalone/docs/GVFG_PLAYBACK_API.md)。
-獨立套件可參閱 SDK 安裝文件中的同名手冊；上面的 source-tree 連結只在完整 workspace 有效。
+Hiding the preview does not stop video timestamp submissions. A/V mode still requires
+both streams. On stop, the sample joins its read workers and stops playback before
+releasing capture resources.
 
-## 5. Release 封裝
+The sample displays basic status, versions, and API errors. Its existing status loop
+passes `connected` from `gvfg_get_channel_signal_status()` to
+`gvfg_playback_set_signal_connected()`. The Playback helper owns the built-in
+NO SIGNAL card; the sample does not need image assets or card rendering code.
+Signal state is not inferred from FPS, frame timeouts, or black pixels.
 
-先手動建置 Release，再執行：
+Internal Debug retains no-frame/resume logs and backend diagnostics. Signal text
+describes SDK connection state, which does not by itself prove physical HDMI lock
+or successful frame delivery.
+
+See [gvfg_capture.h](include/gvfg_capture.h) for Capture APIs and ownership contracts,
+and [gvfg_playback.h](include/gvfg_playback.h) for playback modes, synchronization,
+and signal card APIs.
+
+## 5. Release Packaging
+
+Build Release first, then run:
 
 ```bat
 package_release.bat "C:\path\to\gvfg_qt_preview.exe" "C:\Qt\6.10.2\msvc2022_64\bin" "C:\path\to\packages"
 ```
 
-不指定參數時使用腳本定義的 Qt Creator Release build 路徑。
-腳本不建置、不搜尋其他 build，從 EXE 同目錄取 gvfg.dll／gvfg_playback.dll，
-再以匹配的 windeployqt 打包 Qt／runtime。
-SDK include／匯入庫與 Demo source 是開發套件內容；app runtime zip 與完整開發套件不是同一件事。
+Without arguments, the script uses its configured Qt Creator Release build path.
+It does not build the application or search other build directories. It takes
+`gvfg.dll` and `gvfg_playback.dll` from the executable's directory and uses the
+matching `windeployqt` to package Qt and runtime dependencies.
+
+The application runtime ZIP and the source development package serve different
+purposes. For source delivery, include `CMakeLists.txt`, `README.md`,
+`package_release.bat`, and `src/include/bin/lib`. Exclude local build directories,
+`CMakeCache.txt`, Git metadata, and Qt Creator user settings so each user can create
+their own build directory.

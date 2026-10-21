@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(GVFG_Customer_Sample LANGUAGES CXX)
 
-set(GVFG_SAMPLE_VERSION "1.0.3-internal")
+set(GVFG_SAMPLE_VERSION "1.0.4-internal")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,23 +17,26 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-# Development override: validate against a freshly built SDK without replacing
-# the packaged runtime. Without an override, prefer sibling SDK sources; a
-# standalone customer package uses its own include/bin/lib layout.
+# Internal diagnostics need private SDK headers and matching source builds.
+# Customer master separately defaults to the packaged include/bin/lib.
 set(GVFG_SAMPLE_SDK_BUILD_DIR "" CACHE PATH "GVFG standalone build directory")
 set(GVFG_SAMPLE_SDK_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../GVFG_Standalone/GVFG_SDK" CACHE PATH "GVFG standalone sources")
 set(_sdk_bin "${CMAKE_CURRENT_SOURCE_DIR}/bin")
 set(_sdk_lib "${CMAKE_CURRENT_SOURCE_DIR}/lib")
 set(_sdk_include "${CMAKE_CURRENT_SOURCE_DIR}/include")
+if(GVFG_SAMPLE_SDK_SOURCE_DIR AND NOT EXISTS "${GVFG_SAMPLE_SDK_SOURCE_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR "GVFG_SAMPLE_SDK_SOURCE_DIR does not contain the SDK CMakeLists.txt")
+endif()
 if(GVFG_SAMPLE_SDK_BUILD_DIR)
   set(_sdk_bin "${GVFG_SAMPLE_SDK_BUILD_DIR}/bin")
   set(_sdk_lib "${GVFG_SAMPLE_SDK_BUILD_DIR}/lib")
-  set(_sdk_include "${GVFG_SAMPLE_SDK_SOURCE_DIR}/sdk/gvfg/include;${GVFG_SAMPLE_SDK_SOURCE_DIR}/helpers/gvfg_preview/include;${GVFG_SAMPLE_SDK_SOURCE_DIR}/helpers/gvfg_audio_playback/include;${GVFG_SAMPLE_SDK_SOURCE_DIR}/helpers/gvfg_playback/include")
+  if(GVFG_SAMPLE_SDK_SOURCE_DIR)
+    set(_sdk_include "${GVFG_SAMPLE_SDK_SOURCE_DIR}/sdk/gvfg/include;${GVFG_SAMPLE_SDK_SOURCE_DIR}/helpers/gvfg_preview/include;${GVFG_SAMPLE_SDK_SOURCE_DIR}/helpers/gvfg_audio_playback/include;${GVFG_SAMPLE_SDK_SOURCE_DIR}/helpers/gvfg_playback/include")
+  endif()
 endif()
 
-# In a development checkout, build the sibling SDK from source so newly added
-# APIs cannot accidentally link against stale package import libraries.
-if(NOT GVFG_SAMPLE_SDK_BUILD_DIR AND EXISTS "${GVFG_SAMPLE_SDK_SOURCE_DIR}/CMakeLists.txt")
+# Internal builds use SDK sources unless a prebuilt SDK is explicitly selected.
+if(NOT GVFG_SAMPLE_SDK_BUILD_DIR AND GVFG_SAMPLE_SDK_SOURCE_DIR)
   add_subdirectory("${GVFG_SAMPLE_SDK_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/gvfg_sdk")
   add_library(GVFG::Capture ALIAS gvfg)
   add_library(GVFG::Playback ALIAS gvfg_playback)
