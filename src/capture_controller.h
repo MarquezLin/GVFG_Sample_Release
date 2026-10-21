@@ -77,7 +77,7 @@ private:
         Playback playback;
         bool audioEnabled = false;
         gvfg_audio_format_t audioFormat{};
-        std::atomic<uint64_t> videoFailed{0};
+        std::atomic<uint64_t> videoReceived{0}, videoFailed{0};
         gvfg_preview_delivery_stats_t previewBaseline{};
         uint64_t lastLoggedPreviewFailures = 0;
         uint64_t lastLoggedAudioReleaseFailures = 0, lastLoggedAudioOutputFailures = 0;

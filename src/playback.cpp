@@ -1,6 +1,14 @@
 #include "playback.h"
 
 Playback::~Playback() { close(); }
+gvfg_playback_status_t Playback::setSignalConnected(bool connected) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!player_) {
+        const auto status = gvfg_playback_create(&player_);
+        if (status != GVFG_PLAYBACK_OK) return status;
+    }
+    return gvfg_playback_set_signal_connected(player_, connected ? 1 : 0);
+}
 bool Playback::attachWindow(void *hwnd) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!player_ && gvfg_playback_create(&player_) != GVFG_PLAYBACK_OK) return false;
@@ -13,7 +21,9 @@ bool Playback::start(int channel, const gvfg_audio_format_t &format, bool audio,
     gvfg_playback_config_t config{}; gvfg_playback_default_config(&config);
     config.mode = audio ? GVFG_PLAYBACK_AUDIO_VIDEO : GVFG_PLAYBACK_VIDEO_ONLY;
     config.audio_format = {format.sample_rate, static_cast<uint16_t>(format.channels), static_cast<uint16_t>(format.bits_per_sample)};
-    const auto status = gvfg_playback_start(player_, &config);
+    // Preview and audio play independently by default.
+    auto status = gvfg_playback_set_sync_enabled(player_, 0);
+    if (status == GVFG_PLAYBACK_OK) status = gvfg_playback_start(player_, &config);
     if (status != GVFG_PLAYBACK_OK && log_) log_(QStringLiteral("CH%1 [PLAYBACK] start failed | %2").arg(channel_).arg(QString::fromUtf8(gvfg_playback_strerror(status))));
     return status == GVFG_PLAYBACK_OK;
 }

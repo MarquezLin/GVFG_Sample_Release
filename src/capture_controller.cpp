@@ -393,6 +393,7 @@ void CaptureController::startCapture(int channelIndex)
     // 6. Reset per-run state before publishing running=true to worker threads.
     channel.previewFailureCount = 0;
     channel.audioEnabled = audioEnabled;
+    channel.videoReceived = 0;
     channel.videoFailed = 0;
     channel.lastLoggedPreviewFailures = 0;
     channel.lastLoggedAudioReleaseFailures = channel.lastLoggedAudioOutputFailures = 0;
@@ -534,6 +535,7 @@ void CaptureController::captureReadLoop(int channelIndex)
         {
             // A successful read borrows one SDK-owned frame. Finish all use of
             // frame.data before releasing it, and release it exactly once.
+            ++channel.videoReceived;
             if (!channel.frameAvailable.exchange(true, std::memory_order_acq_rel))
             {
                 QMetaObject::invokeMethod(this, [this]()
