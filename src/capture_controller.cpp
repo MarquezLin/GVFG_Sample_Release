@@ -15,7 +15,6 @@ namespace
 {
     constexpr int kRuntimeStatusIntervalMs = 200;
     constexpr uint32_t kFrameReadTimeoutMs = 200;
-    constexpr uint32_t kPreviewDrainTimeoutMs = 2000;
 
     QString eventTypeText(gvfg_event_type_t type)
     {
@@ -73,8 +72,11 @@ void CaptureController::setPreviewTarget(int channel, void *nativeWindow)
 
 void CaptureController::setPreviewVisible(int channel, bool visible)
 {
-    if (isValidChannel(channel))
+    if (isValidChannel(channel)) {
         channels_[channel].previewVisible.store(visible, std::memory_order_release);
+        if (channels_[channel].running.load())
+            channels_[channel].playback.attachWindow(visible ? channels_[channel].previewTarget : nullptr);
+    }
 }
 
 bool CaptureController::channelRunning(int channel) const
@@ -267,11 +269,7 @@ void CaptureController::closeDeviceSession(bool clearSelection)
     stopAllCaptures();
     for (ChannelRuntime &channel : channels_)
     {
-        if (channel.previewHandle)
-        {
-            gvfg_preview_destroy(channel.previewHandle);
-            channel.previewHandle = nullptr;
-        }
+        channel.playback.close();
     }
 
     if (handle_ != nullptr)
@@ -395,15 +393,27 @@ void CaptureController::startCapture(int channelIndex)
     // 6. Reset per-run state before publishing running=true to worker threads.
     channel.previewFailureCount = 0;
     channel.audioEnabled = audioEnabled;
+    channel.videoReceived = 0;
     channel.videoFailed = 0;
     channel.lastLoggedPreviewFailures = 0;
     channel.lastLoggedAudioReleaseFailures = channel.lastLoggedAudioOutputFailures = 0;
     channel.lastDeliveryLogMs = 0;
     channel.previewBaseline = {};
-    gvfg_preview_get_delivery_stats(channel.previewHandle, &channel.previewBaseline);
+    channel.playback.deliveryStats(&channel.previewBaseline);
     channel.stopRequested.store(false, std::memory_order_release);
     channel.running.store(true, std::memory_order_release);
     channel.captureThreadExited.store(false, std::memory_order_release);
+
+    if (!channel.playback.start(channelIndex, channel.audioFormat, audioEnabled,
+            [this](const QString &message) { postLog(message); }))
+    {
+        channel.running = false;
+        channel.captureThreadExited = true;
+        gvfg_stop_channel(handle_, channelIndex);
+        emit previewCloseRequested(channelIndex);
+        closeDeviceIfIdle();
+        return;
+    }
 
     // 7. Start application-owned read loops last. The video loop always runs;
     // audio playback and its read loop are created only when audio was enabled.
@@ -411,9 +421,6 @@ void CaptureController::startCapture(int channelIndex)
                                         { captureReadLoop(channelIndex); });
     if (audioEnabled)
     {
-        channel.audioPlayback.start(
-            channelIndex, channel.audioFormat,
-            [this](const QString &message) { postLog(message); });
         channel.audioThread = std::thread([this, channelIndex]()
                                           { audioReadLoop(channelIndex); });
     }
@@ -441,8 +448,6 @@ void CaptureController::stopCapture(int channelIndex)
         channel.stopRequested.store(true, std::memory_order_release);
         joinCaptureThread(channelIndex);
         joinAudioThread(channelIndex);
-        if (gvfg_preview_wait_idle(channel.previewHandle, kPreviewDrainTimeoutMs) != GVFG_PREVIEW_OK)
-            appendLog(QStringLiteral("CH%1 [APP] WARNING preview drain timeout | in-flight not classified as lost").arg(channelIndex));
         logDeliveryStatus(channelIndex, true);
         const gvfg_status_t stopStatus = gvfg_stop_channel(handle_, channelIndex);
         if (stopStatus != GVFG_OK)
@@ -476,31 +481,9 @@ bool CaptureController::applyPreview(int channelIndex)
         return false;
 
     ChannelRuntime &channel = channels_[channelIndex];
-    if (!channel.previewHandle)
+    if (!channel.previewTarget || !channel.playback.attachWindow(channel.previewTarget))
     {
-        const gvfg_preview_status_t st = gvfg_preview_create(&channel.previewHandle);
-        if (st != GVFG_PREVIEW_OK || !channel.previewHandle)
-        {
-            appendLog(QStringLiteral("CH%1 [APP] Preview setup failed | %2")
-                          .arg(channelIndex)
-                          .arg(QString::fromUtf8(gvfg_preview_strerror(st))));
-            channel.previewHandle = nullptr;
-            return false;
-        }
-    }
-
-    if (!channel.previewTarget)
-    {
-        appendLog(QStringLiteral("CH%1 [APP] Preview setup failed | no native window target").arg(channelIndex));
-        return false;
-    }
-    const gvfg_preview_status_t st = gvfg_preview_attach_window(
-        channel.previewHandle, channel.previewTarget);
-    if (st != GVFG_PREVIEW_OK)
-    {
-        appendLog(QStringLiteral("CH%1 [APP] Preview setup failed | %2")
-                      .arg(channelIndex)
-                      .arg(QString::fromUtf8(gvfg_preview_strerror(st))));
+        appendLog(QStringLiteral("CH%1 [PLAYBACK] window setup failed").arg(channelIndex));
         return false;
     }
     return true;
@@ -530,11 +513,9 @@ void CaptureController::processPendingEvents()
             {
                 updateSignalStatus();
                 refreshSdiInfo(channel);
-                channels_[channel].audioPlayback.resetTimeline();
+                channels_[channel].playback.resetTimeline();
             }
 
-            if (eventType == GVFG_EVENT_VIDEO_INPUT_UNPLUG && channels_[channel].previewHandle)
-                gvfg_preview_clear(channels_[channel].previewHandle);
 
             eventType = GVFG_EVENT_UNKNOWN;
         }
@@ -554,13 +535,13 @@ void CaptureController::captureReadLoop(int channelIndex)
         {
             // A successful read borrows one SDK-owned frame. Finish all use of
             // frame.data before releasing it, and release it exactly once.
+            ++channel.videoReceived;
             if (!channel.frameAvailable.exchange(true, std::memory_order_acq_rel))
             {
                 QMetaObject::invokeMethod(this, [this]()
                                           { emit stateChanged(); }, Qt::QueuedConnection);
             }
-            const bool attemptedPreview = channel.previewHandle &&
-                channel.previewVisible.load(std::memory_order_acquire);
+            const bool attemptedPreview = true; // Always submit timeline, including hidden preview.
             if (attemptedPreview)
             {
                 gvfg_preview_frame_t previewFrame{};
@@ -585,18 +566,20 @@ void CaptureController::captureReadLoop(int channelIndex)
                     break;
                 }
 
-                const gvfg_preview_status_t previewStatus =
-                    gvfg_preview_render_frame(channel.previewHandle, &previewFrame);
-                if (previewStatus != GVFG_PREVIEW_OK)
+                const gvfg_playback_status_t previewStatus =
+                    channel.playback.submitVideo(previewFrame, frame.timestamp_ns);
+                if (previewStatus != GVFG_PLAYBACK_OK)
                 {
                     ++channel.videoFailed;
+                    channel.stopRequested = true;
+                    QMetaObject::invokeMethod(this, [this, channelIndex] { stopCapture(channelIndex); }, Qt::QueuedConnection);
                     const uint64_t failures = ++channel.previewFailureCount;
                     if (failures == 1)
                     {
                         postLog(QStringLiteral("CH%1 [APP] Preview render failed | consecutive=%2 error=%3")
                                     .arg(channelIndex)
                                     .arg(static_cast<qulonglong>(failures))
-                                    .arg(QString::fromUtf8(gvfg_preview_strerror(previewStatus))));
+                                    .arg(QString::fromUtf8(gvfg_playback_strerror(previewStatus))));
                     }
                 }
                 else
@@ -612,8 +595,6 @@ void CaptureController::captureReadLoop(int channelIndex)
 
                 }
             }
-            if (!channel.previewHandle)
-                ++channel.videoFailed;
             const gvfg_status_t releaseStatus = gvfg_release_channel_frame(handle_, channelIndex, &frame);
             if (releaseStatus != GVFG_OK)
             {
@@ -621,7 +602,6 @@ void CaptureController::captureReadLoop(int channelIndex)
                                           { reportError(QStringLiteral("gvfg_release_channel_frame"), releaseStatus, channelIndex); }, Qt::QueuedConnection);
                 break;
             }
-            channel.audioPlayback.updateVideoTimestamp(frame.timestamp_ns);
 
             continue;
         }
@@ -676,7 +656,7 @@ void CaptureController::audioReadLoop(int channelIndex)
             break;
         }
 
-        channel.audioPlayback.recordReceivedFrame();
+        channel.playback.recordReceivedFrame();
         // Audio frame memory is also owned by the SDK. Copy the PCM payload
         // before release so playback never retains an SDK-owned pointer.
         std::vector<uint8_t> pcm(frame.data_size);
@@ -685,7 +665,7 @@ void CaptureController::audioReadLoop(int channelIndex)
             gvfg_release_channel_audio_frame(handle_, channelIndex, &frame);
         if (releaseStatus != GVFG_OK)
         {
-            channel.audioPlayback.recordReleaseFailure();
+            channel.playback.recordReleaseFailure();
         }
         if (releaseStatus != GVFG_OK && !channel.stopRequested.load(std::memory_order_acquire))
         {
@@ -695,8 +675,12 @@ void CaptureController::audioReadLoop(int channelIndex)
         }
 
         if (releaseStatus == GVFG_OK &&
-            !channel.audioPlayback.enqueue(std::move(pcm), frame.timestamp_ns))
+            !channel.playback.enqueue(std::move(pcm), frame.timestamp_ns))
+        {
+            channel.stopRequested = true;
+            QMetaObject::invokeMethod(this, [this, channelIndex] { stopCapture(channelIndex); }, Qt::QueuedConnection);
             break;
+        }
     }
 }
 
@@ -704,5 +688,5 @@ void CaptureController::joinAudioThread(int channel)
 {
     if (channels_[channel].audioThread.joinable())
         channels_[channel].audioThread.join();
-    channels_[channel].audioPlayback.stop();
+    channels_[channel].playback.stop();
 }

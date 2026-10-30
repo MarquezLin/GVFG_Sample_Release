@@ -103,8 +103,12 @@ void CaptureController::updateSignalStatus(bool queryHardware)
         }
 
         const gvfg_signal_status_t &signal = channel.cachedSignalStatus;
+        const auto cardStatus = channel.playback.setSignalConnected(signal.connected != 0);
+        if (cardStatus != GVFG_PLAYBACK_OK)
+            appendLog(QStringLiteral("CH%1 [PLAYBACK] signal state failed | %2")
+                .arg(channelIndex).arg(QString::fromUtf8(gvfg_playback_strerror(cardStatus))));
         const QString inputStatus = signal.connected
-                                        ? QStringLiteral("CH%1 [SDK] Video Locked | %2")
+                                        ? QStringLiteral("CH%1 [SDK] Input connected (SDK state) | %2")
                                               .arg(channelIndex).arg(signalFrameText(signal))
                                         : QStringLiteral("CH%1 [SDK] Video Undetected").arg(channelIndex);
         if (inputStatus != channel.lastLoggedInputStatus)
@@ -116,12 +120,10 @@ void CaptureController::updateSignalStatus(bool queryHardware)
             emit previewSourceSizeChanged(channelIndex, signal.width, signal.height);
 
         gvfg_preview_info_t previewInfo{};
-        const bool previewInfoOk = channel.previewHandle &&
-            gvfg_preview_get_info(channel.previewHandle, &previewInfo) == GVFG_PREVIEW_OK &&
+        const bool previewInfoOk = channel.playback.previewInfo(&previewInfo) == GVFG_PLAYBACK_OK &&
             previewInfo.active;
         gvfg_preview_stats_t previewStats{};
-        const bool previewStatsOk = channel.previewHandle &&
-            gvfg_preview_get_stats(channel.previewHandle, &previewStats) == GVFG_PREVIEW_OK;
+        const bool previewStatsOk = channel.playback.previewStats(&previewStats) == GVFG_PLAYBACK_OK;
         const QString previewFps = previewStatsOk && previewStats.present_fps > 0.0
                                        ? QString::number(previewStats.present_fps, 'f', 2)
                                        : QStringLiteral("--");
@@ -135,9 +137,12 @@ void CaptureController::updateSignalStatus(bool queryHardware)
                                     ? QStringLiteral("Running") : QStringLiteral("Stopped"),
                                 signalFrameText(signal),
                                 channel.zeroCopy ? QStringLiteral("Zero-copy") : QStringLiteral("Copy"));
+        statusLines << QStringLiteral("CH%1 Video | received=%2 frames")
+                           .arg(channelIndex)
+                           .arg(static_cast<qulonglong>(channel.videoReceived.load()));
         if (channel.audioEnabled)
         {
-            const AudioPlayback::Statistics audioStats = channel.audioPlayback.statistics();
+            const Playback::Statistics audioStats = channel.playback.statistics();
             statusLines << QStringLiteral("CH%1 Audio | %2 Hz %3 ch %4-bit | received=%5 frames")
                                .arg(channelIndex)
                                .arg(channel.audioFormat.sample_rate)
@@ -198,11 +203,10 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
 
     const auto count = [](uint64_t value) { return QString::number(static_cast<qulonglong>(value)); };
     gvfg_preview_delivery_stats_t previewStats{};
-    const bool previewOk = channel.previewHandle &&
-        gvfg_preview_get_delivery_stats(channel.previewHandle, &previewStats) == GVFG_PREVIEW_OK;
+    const bool previewOk = channel.playback.deliveryStats(&previewStats) == GVFG_PLAYBACK_OK;
     const uint64_t failed =
         (previewOk ? previewStats.failed - channel.previewBaseline.failed : 0) + channel.videoFailed.load();
-    const AudioPlayback::Statistics audioStats = channel.audioPlayback.statistics();
+    const Playback::Statistics audioStats = channel.playback.statistics();
 
     if (failed != channel.lastLoggedPreviewFailures)
         appendLog(QStringLiteral("CH%1 [APP] ERROR preview submission | failures=%2")
@@ -211,13 +215,10 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
         appendLog(QStringLiteral("CH%1 [SDK API] ERROR audio frame release | failed_frames=%2")
                       .arg(QString::number(channelIndex), count(audioStats.releaseFailedFrames)));
     if (audioStats.outputFailedFrames != channel.lastLoggedAudioOutputFailures)
-        appendLog(QStringLiteral("CH%1 [APP] ERROR audio output write | failed_frames=%2")
+        appendLog(QStringLiteral("CH%1 [APP] ERROR audio playback submission | failed_frames=%2")
                       .arg(QString::number(channelIndex), count(audioStats.outputFailedFrames)));
 
-    if (finalSnapshot || failed != channel.lastLoggedPreviewFailures ||
-        audioStats.releaseFailedFrames != channel.lastLoggedAudioReleaseFailures ||
-        audioStats.outputFailedFrames != channel.lastLoggedAudioOutputFailures)
-        channel.lastDeliveryLogMs = now;
+    channel.lastDeliveryLogMs = now;
     channel.lastLoggedPreviewFailures = failed;
     channel.lastLoggedAudioReleaseFailures = audioStats.releaseFailedFrames;
     channel.lastLoggedAudioOutputFailures = audioStats.outputFailedFrames;

@@ -4,7 +4,6 @@
 /out/
 /logs/
 /packages/
-/package_release.bat
 
 CMakeUserPresets.json
 CMakeCache.txt

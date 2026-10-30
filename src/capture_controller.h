@@ -1,6 +1,6 @@
 #pragma once
 
-#include "audio_playback.h"
+#include "playback.h"
 
 #include <gvfg_capture.h>
 #include <gvfg_preview.h>
@@ -71,14 +71,13 @@ private:
         bool requestedAudio = false;
         gvfg_pixel_format_t requestedFormat = GVFG_PIXFMT_YUY2;
         void *previewTarget = nullptr;
-        gvfg_preview_handle previewHandle = nullptr;
         std::atomic<bool> running{false}, stopRequested{false};
         std::atomic<bool> frameAvailable{false}, previewVisible{false}, captureThreadExited{true};
         std::thread captureThread, audioThread;
-        AudioPlayback audioPlayback;
+        Playback playback;
         bool audioEnabled = false;
         gvfg_audio_format_t audioFormat{};
-        std::atomic<uint64_t> videoFailed{0};
+        std::atomic<uint64_t> videoReceived{0}, videoFailed{0};
         gvfg_preview_delivery_stats_t previewBaseline{};
         uint64_t lastLoggedPreviewFailures = 0;
         uint64_t lastLoggedAudioReleaseFailures = 0, lastLoggedAudioOutputFailures = 0;
