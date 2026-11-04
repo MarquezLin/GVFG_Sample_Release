@@ -18,15 +18,14 @@ pass 1 to `gvfg_playback_set_sync_enabled()` in the startup code.
 ## 2. Package Contents and Dependencies
 
 ```text
-include/  gvfg_capture.h, gvfg_playback.h, gvfg_preview.h, gvfg_audio_playback.h
+include/  gvfg_capture.h, gvfg_playback.h
 bin/      gvfg.dll, gvfg_playback.dll
 lib/      gvfg.lib, gvfg_playback.lib, and GNU import libraries
 src/      Qt sample source
 ```
 
 Link against `gvfg.lib` and `gvfg_playback.lib`, and deploy `gvfg.dll` and
-`gvfg_playback.dll` beside the executable. `gvfg_preview.h` and
-`gvfg_audio_playback.h` provide data types used by Playback.
+`gvfg_playback.dll` beside the executable. `gvfg_playback.h` contains all public playback functions and data types; no backend headers are required.
 
 The Git repository includes the SDK headers, import libraries, and DLLs. After cloning,
 build the sample as described below; no separate SDK source checkout is required.

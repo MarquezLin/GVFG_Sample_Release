@@ -209,6 +209,15 @@ void MainWindow::updateUiState()
     const bool running[] = {controller_->channelRunning(0), controller_->channelRunning(1)};
     const bool anyRunning = running[0] || running[1];
     const bool selected = ui_->deviceCombo->currentData().toInt() >= 0;
+    for (int channel = GVFG_CHANNEL_0; channel <= GVFG_CHANNEL_1; ++channel)
+    {
+        previewWindows_[channel]->setWindowTitle(
+            selected
+                ? QStringLiteral("GVFG Preview - #%1 - CH%2")
+                      .arg(ui_->deviceCombo->currentData().toInt() + 1)
+                      .arg(channel)
+                : QStringLiteral("GVFG Preview - CH%1").arg(channel));
+    }
     ui_->refreshButton->setEnabled(!anyRunning);
     ui_->deviceCombo->setEnabled(!anyRunning);
     ui_->ch0StartButton->setEnabled(selected && !running[0]);

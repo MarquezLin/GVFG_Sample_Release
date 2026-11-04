@@ -202,10 +202,7 @@ void CaptureController::logDeliveryStatus(int channelIndex, bool finalSnapshot)
         return;
 
     const auto count = [](uint64_t value) { return QString::number(static_cast<qulonglong>(value)); };
-    gvfg_preview_delivery_stats_t previewStats{};
-    const bool previewOk = channel.playback.deliveryStats(&previewStats) == GVFG_PLAYBACK_OK;
-    const uint64_t failed =
-        (previewOk ? previewStats.failed - channel.previewBaseline.failed : 0) + channel.videoFailed.load();
+    const uint64_t failed = channel.videoFailed.load();
     const Playback::Statistics audioStats = channel.playback.statistics();
 
     if (failed != channel.lastLoggedPreviewFailures)

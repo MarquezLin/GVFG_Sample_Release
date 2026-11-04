@@ -72,4 +72,3 @@ void Playback::recordReleaseFailure() { std::lock_guard<std::mutex> lock(mutex_)
 Playback::Statistics Playback::statistics() const { std::lock_guard<std::mutex> lock(mutex_); return statistics_; }
 gvfg_playback_status_t Playback::previewInfo(gvfg_preview_info_t *s) const { std::lock_guard<std::mutex> lock(mutex_); return gvfg_playback_get_preview_info(player_, s); }
 gvfg_playback_status_t Playback::previewStats(gvfg_preview_stats_t *s) const { std::lock_guard<std::mutex> lock(mutex_); return gvfg_playback_get_preview_stats(player_, s); }
-gvfg_playback_status_t Playback::deliveryStats(gvfg_preview_delivery_stats_t *s) const { std::lock_guard<std::mutex> lock(mutex_); return gvfg_playback_get_delivery_stats(player_, s); }

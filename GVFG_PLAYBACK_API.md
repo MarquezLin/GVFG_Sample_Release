@@ -13,12 +13,26 @@
 MinGW 使用對應的 `libgvfg.dll.a`、`libgvfg_playback.dll.a`。
 播放功能只有一個 DLL；擷取仍有自己的 DLL。Windows 與 C/C++ runtime 相依仍須滿足。
 
-公開標頭需一起交付：`gvfg_capture.h`、`gvfg_playback.h`、`gvfg_preview.h`、
-`gvfg_audio_playback.h`。後兩個由 Playback 標頭引入，提供影像、PCM 格式及統計型別。
+Playback 僅需交付 `gvfg_playback.h`，其中已包含所有公開函式、影像、PCM 格式及統計型別。擷取功能另使用 `gvfg_capture.h`；內部音訊與顯示後端不需另外提供標頭。
+
+### 顯示資訊與呈現統計
+
+公開查詢提供一般應用程式需要的資訊：
+
+| 查詢 | 結果 | 用途 |
+|---|---|---|
+| `gvfg_playback_get_preview_info()` | `gvfg_preview_info_t` | 取得影像尺寸、格式與顯示卡資訊 |
+| `gvfg_playback_get_preview_stats()` | `gvfg_preview_stats_t` | 取得 `present_fps`、`presented_frames`、`skipped_presents` |
+
+呼叫時傳入有效的 Playback handle 與結果結構指標，並檢查回傳值。
+`present_fps` 是最近五秒成功被 DXGI Present 接受的速率；`presented_frames` 是成功 Present 的累積數，兩者均不代表螢幕實際掃描輸出。
+`skipped_presents` 是預覽端略過呈現的累積數，不是擷取或錄影掉格總數。
+
+詳細佇列、GPU upload slot 與逐影格 delivery 計數屬於內部 Debug 診斷，不在公開 header 或客戶 API 中提供。應用程式不需管理這些內部狀態。
 
 ## 2. 選擇模式
 
-先以 `gvfg_playback_default_config()` 初始化 config，再修改需要的欄位。
+先以 `gvfg_playback_default_config()` 初始化 config，再修改需要的欄位。一般應用程式保留 `max_video_frames`、`max_audio_ms`、`max_video_bytes` 的預設值；這三項是進階容量上限，僅在有明確記憶體或待播容量需求時調整，不代表固定播放延遲。
 
 同步預設開啟；可在 create 後、start 前，或播放途中選擇：
 

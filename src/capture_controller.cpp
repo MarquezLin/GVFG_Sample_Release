@@ -398,8 +398,6 @@ void CaptureController::startCapture(int channelIndex)
     channel.lastLoggedPreviewFailures = 0;
     channel.lastLoggedAudioReleaseFailures = channel.lastLoggedAudioOutputFailures = 0;
     channel.lastDeliveryLogMs = 0;
-    channel.previewBaseline = {};
-    channel.playback.deliveryStats(&channel.previewBaseline);
     channel.stopRequested.store(false, std::memory_order_release);
     channel.running.store(true, std::memory_order_release);
     channel.captureThreadExited.store(false, std::memory_order_release);

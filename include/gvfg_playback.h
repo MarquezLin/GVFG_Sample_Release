@@ -7,8 +7,67 @@
  * Control calls (start/stop/reset/attach/destroy) must be serialized by the
  * caller; one video producer and one audio producer may submit concurrently.
  */
-#include "gvfg_audio_playback.h"
-#include "gvfg_preview.h"
+#include <stdint.h>
+
+/* Public audio, image and presentation types. Backends remain private. */
+typedef struct
+{
+    uint32_t sample_rate;
+    uint16_t channels;
+    uint16_t bits_per_sample; /* Signed interleaved PCM; must be 16. */
+} gvfg_audio_playback_format_t;
+
+typedef enum
+{
+    GVFG_PREVIEW_PIXFMT_YUY2 = 1,
+    GVFG_PREVIEW_PIXFMT_Y210 = 2,
+    GVFG_PREVIEW_PIXFMT_GRAY16 = 4,
+
+    /* Four interleaved 16-bit UNORM components per pixel: R, G, B, A. */
+    GVFG_PREVIEW_PIXFMT_RGBA16 = 5,
+
+    /* DICOM native YBR_FULL_422: four 16-bit words per pixel pair,
+     * ordered Y0, Y1, Cb, Cr.  Values are right-aligned to bit_depth. */
+    GVFG_PREVIEW_PIXFMT_DICOM_YBR_FULL_422 = 6
+} gvfg_preview_pixel_format_t;
+
+typedef struct
+{
+    const void *data;
+    uint64_t data_size;
+    int width;
+    int height;
+    int pixel_format; /* gvfg_preview_pixel_format_t */
+    int bit_depth;
+    int row_bytes;
+    uint64_t frame_id;
+} gvfg_preview_frame_t;
+
+typedef struct
+{
+    int active;
+    int width;
+    int height;
+    int bit_depth;
+    char pixel_format[32];
+    char adapter_name[160];
+    int adapter_index;
+} gvfg_preview_info_t;
+
+/*
+ * Preview presentation statistics.
+ *
+ * present_fps counts only frames accepted by DXGI Present, not physical
+ * scanout. The rate uses successful presents from the most recent five
+ * seconds. Pending preview replacements are excluded from this rate.
+ */
+typedef struct
+{
+    double present_fps;
+    uint64_t presented_frames;
+    uint64_t skipped_presents;
+} gvfg_preview_stats_t;
+
 
 #ifdef _WIN32
 #ifdef GVFG_PLAYBACK_BUILD
@@ -30,7 +89,7 @@ typedef enum {
     GVFG_PLAYBACK_EINVAL = -1,
     GVFG_PLAYBACK_ESTATE = -2,
     GVFG_PLAYBACK_EOUTPUT = -3,
-    GVFG_PLAYBACK_EQUEUE_FULL = -4,
+    GVFG_PLAYBACK_EQUEUE_FULL = -4, /* Reserved; current APIs do not return this value. */
     GVFG_PLAYBACK_EDISCONTINUITY = -5,
     GVFG_PLAYBACK_EAUDIO = -6 /* A/V audio output disabled; video remains running. */
 } gvfg_playback_status_t;
@@ -51,6 +110,7 @@ typedef struct {
     gvfg_playback_master_t master;
     gvfg_audio_playback_format_t audio_format;
     uint32_t preroll_ms;       /* Default 100; required coverage of both streams. */
+    /* Advanced capacity limits; normally keep the values from default_config. */
     uint32_t max_video_frames; /* Default 32; late preview frames are retired and counted. */
     uint32_t max_audio_ms;     /* Default 1000. */
     uint64_t max_video_bytes;  /* Default 256 MiB, including in-flight copy. */
@@ -105,7 +165,6 @@ GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_stop(gvfg_playback p);
 GVFG_PLAYBACK_API void gvfg_playback_destroy(gvfg_playback p);
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_get_preview_info(gvfg_playback p, gvfg_preview_info_t *info);
 GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_get_preview_stats(gvfg_playback p, gvfg_preview_stats_t *stats);
-GVFG_PLAYBACK_API gvfg_playback_status_t gvfg_playback_get_delivery_stats(gvfg_playback p, gvfg_preview_delivery_stats_t *stats);
 GVFG_PLAYBACK_API const char *gvfg_playback_strerror(gvfg_playback_status_t status);
 
 #ifdef __cplusplus

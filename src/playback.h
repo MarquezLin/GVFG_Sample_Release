@@ -26,7 +26,6 @@ public:
     Statistics statistics() const;
     gvfg_playback_status_t previewInfo(gvfg_preview_info_t *s) const;
     gvfg_playback_status_t previewStats(gvfg_preview_stats_t *s) const;
-    gvfg_playback_status_t deliveryStats(gvfg_preview_delivery_stats_t *s) const;
 private:
     mutable std::mutex mutex_;
     gvfg_playback player_ = nullptr;

@@ -3,7 +3,7 @@
 #include "playback.h"
 
 #include <gvfg_capture.h>
-#include <gvfg_preview.h>
+#include <gvfg_playback.h>
 
 #include <QObject>
 #include <QStringList>
@@ -78,7 +78,6 @@ private:
         bool audioEnabled = false;
         gvfg_audio_format_t audioFormat{};
         std::atomic<uint64_t> videoReceived{0}, videoFailed{0};
-        gvfg_preview_delivery_stats_t previewBaseline{};
         uint64_t lastLoggedPreviewFailures = 0;
         uint64_t lastLoggedAudioReleaseFailures = 0, lastLoggedAudioOutputFailures = 0;
         qint64 lastDeliveryLogMs = 0;
