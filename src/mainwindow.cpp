@@ -78,7 +78,7 @@ MainWindow::MainWindow(QWidget *parent)
         updateUiState(); });
     connect(controller_, &CaptureController::stateChanged, this, &MainWindow::updateUiState);
     connect(controller_, &CaptureController::statusChanged, ui_->statusLabel, &QLabel::setText);
-    connect(controller_, &CaptureController::sdiInfoChanged, ui_->sdiInfoLabel, &QLabel::setText);
+    connect(controller_, &CaptureController::inputInfoChanged, ui_->inputInfoLabel, &QLabel::setText);
     connect(controller_, &CaptureController::logMessage, log_, &SampleLog::append, Qt::QueuedConnection);
     connect(log_, &SampleLog::lineReady, this, &MainWindow::appendLogLine);
     connect(controller_, &CaptureController::previewSourceSizeChanged, this,

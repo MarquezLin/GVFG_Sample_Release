@@ -1,4 +1,5 @@
 #include "capture_controller.h"
+#include <QDateTime>
 #include <QMetaObject>
 #include <QTimer>
 
@@ -211,6 +212,22 @@ bool CaptureController::openChannel(int channel)
 
     if (newlyOpened)
     {
+        if (chipVersionText_.isEmpty())
+        {
+            gvfg_chip_info_t chip{};
+            if (gvfg_get_chip_info(handle_, &chip) == GVFG_OK)
+            {
+                const auto date = QDate::fromString(QString::number(chip.version_date, 16),
+                                                    QStringLiteral("yyyyMMdd"));
+                const auto time = QTime::fromString(
+                    QString::number(chip.version_time, 16).rightJustified(6, QLatin1Char('0')),
+                    QStringLiteral("HHmmss"));
+                chipVersionText_ = date.isValid() && time.isValid()
+                    ? QStringLiteral("Chip version: %1 %2")
+                          .arg(date.toString(Qt::ISODate), time.toString(Qt::ISODate))
+                    : QStringLiteral("Chip version: Invalid date/time");
+            }
+        }
         appendLog(QStringLiteral("Opened device index %1 CH%2 | mode=%3")
                       .arg(selectedDeviceIndex_)
                       .arg(channel)
@@ -276,6 +293,7 @@ void CaptureController::closeDeviceSession(bool clearSelection)
     {
         gvfg_destroy(handle_);
         handle_ = nullptr;
+        chipVersionText_.clear();
         appendLog(QStringLiteral("Closed device"));
     }
 
@@ -283,17 +301,18 @@ void CaptureController::closeDeviceSession(bool clearSelection)
     {
         emit statusChanged(QStringLiteral("Idle"));
         lastSignalStatusText_.clear();
-        emit sdiInfoChanged(QStringLiteral("SDI Info: --"));
+        lastInputInfoText_.clear();
+        emit inputInfoChanged(QStringLiteral("Input Info: --"));
         selectedDeviceIndex_ = -1;
     }
     for (ChannelRuntime &channel : channels_)
     {
         channel.opened = false;
+        channel.cachedInputInfoText.clear();
         if (clearSelection)
         {
             channel.cachedSignalStatus = {};
             channel.haveCachedSignalStatus = false;
-            channel.cachedSdiInfoText.clear();
             channel.lastLoggedInputStatus.clear();
         }
     }
@@ -358,7 +377,7 @@ void CaptureController::startCapture(int channelIndex)
         if (st == GVFG_ETIMEOUT)
         {
             updateSignalStatus();
-            refreshSdiInfo(channelIndex);
+            refreshInputInfo(channelIndex);
         }
         emit previewCloseRequested(channelIndex);
         emit stateChanged();
@@ -369,7 +388,7 @@ void CaptureController::startCapture(int channelIndex)
     // 5. Refresh the detected input information and prepare the preview target.
     // If preview setup fails, stop the SDK channel before returning.
     updateSignalStatus();
-    refreshSdiInfo(channelIndex);
+    refreshInputInfo(channelIndex);
 
     channel.frameAvailable.store(false, std::memory_order_release);
     if (channel.haveCachedSignalStatus &&
@@ -498,7 +517,7 @@ void CaptureController::processPendingEvents()
             continue;
         gvfg_event_type_t eventType = GVFG_EVENT_UNKNOWN;
         // A zero timeout makes polling non-blocking. Drain every queued event,
-        // then query signal/SDI state again when the input state has changed.
+        // then query signal and input information again when the input state has changed.
         while (gvfg_poll_channel_event(handle_, channel, &eventType, 0) == GVFG_OK)
         {
             appendLog(QStringLiteral("CH%1 [SDK] Event | %2").arg(channel).arg(eventTypeText(eventType)));
@@ -510,7 +529,7 @@ void CaptureController::processPendingEvents()
             if (signalChanged)
             {
                 updateSignalStatus();
-                refreshSdiInfo(channel);
+                refreshInputInfo(channel);
                 channels_[channel].playback.resetTimeline();
             }
 

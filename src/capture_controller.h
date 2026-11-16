@@ -50,7 +50,7 @@ signals:
     void devicesChanged(const QStringList &names);
     void stateChanged();
     void statusChanged(const QString &text);
-    void sdiInfoChanged(const QString &text);
+    void inputInfoChanged(const QString &text);
     void logMessage(const QString &message);
     void previewSourceSizeChanged(int channel, int width, int height);
     void previewShowRequested(int channel);
@@ -84,7 +84,7 @@ private:
         uint64_t previewFailureCount = 0;
         gvfg_signal_status_t cachedSignalStatus{};
         bool haveCachedSignalStatus = false;
-        QString cachedSdiInfoText;
+        QString cachedInputInfoText;
         QString lastLoggedInputStatus;
     };
 
@@ -92,7 +92,7 @@ private:
     void appendLog(const QString &message);
     void postLog(const QString &message);
     bool openChannel(int channel);
-    void refreshSdiInfo(int channel);
+    void refreshInputInfo(int channel);
     void captureReadLoop(int channel);
     void audioReadLoop(int channel);
     void joinCaptureThread(int channel);
@@ -102,6 +102,8 @@ private:
     std::array<gvfg_device_info_t, GVFG_MAX_DEVICES> devices_{};
     int deviceCount_ = 0;
     gvfg_handle handle_ = nullptr;
+    QString chipVersionText_;
+    QString lastInputInfoText_;
     int selectedDeviceIndex_ = -1;
     std::array<ChannelRuntime, 2> channels_{};
     std::array<bool, 2> channelStatusVisible_{{true, true}};

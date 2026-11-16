@@ -41,31 +41,61 @@ QString signalFrameText(const gvfg_signal_status_t &signal)
 }
 }
 
-void CaptureController::refreshSdiInfo(int channel)
+void CaptureController::refreshInputInfo(int channel)
 {
-    gvfg_sdi_info_t info{};
-    if (gvfg_get_channel_sdi_info(handle_, channel, &info) != GVFG_OK)
-        return;
-
-    const QString text = QStringLiteral("CH%1 SDI Info | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 | %10 | ErrorCount=%11")
-                             .arg(channel)
-                             .arg(QString::fromUtf8(info.signal_lock_name))
-                             .arg(QString::fromUtf8(info.mode_name))
-                             .arg(QString::fromUtf8(info.resolution_name))
-                             .arg(QString::fromUtf8(info.fps_name))
-                             .arg(QString::fromUtf8(info.scan_name))
-                             .arg(QString::fromUtf8(info.st352_format_name))
-                             .arg(QString::fromUtf8(info.st352_fps_name))
-                             .arg(QString::fromUtf8(info.st352_chroma_name))
-                             .arg(QString::fromUtf8(info.st352_bit_depth_name))
-                             .arg(info.error_count);
-
     ChannelRuntime &runtime = channels_[channel];
-    if (runtime.cachedSdiInfoText == text)
+    QString text = QStringLiteral("CH%1 Input Info: --").arg(channel);
+    if (runtime.haveCachedSignalStatus &&
+        runtime.cachedSignalStatus.video_interface == GVFG_INPUT_INTERFACE_HDMI)
+    {
+        gvfg_hdmi_info_t info{};
+        text = QStringLiteral("CH%1 HDMI Info").arg(channel);
+        if (gvfg_get_channel_hdmi_info(handle_, channel, &info) != GVFG_OK)
+            text += QStringLiteral(" | Unavailable");
+        else if (!info.connected)
+            text += QStringLiteral(" | No signal");
+        else
+            text += QStringLiteral(" | Locked | %1x%2 | %3 fps | %4 | %5 | %6-bit")
+                        .arg(info.width).arg(info.height).arg(info.fps)
+                        .arg(QString::fromUtf8(info.color_format_name),
+                             QString::fromUtf8(info.color_space_name))
+                        .arg(info.bit_depth);
+    }
+    else if (runtime.haveCachedSignalStatus &&
+             runtime.cachedSignalStatus.video_interface == GVFG_INPUT_INTERFACE_SDI)
+    {
+        gvfg_sdi_info_t info{};
+        if (gvfg_get_channel_sdi_info(handle_, channel, &info) != GVFG_OK)
+            text = QStringLiteral("CH%1 SDI Info | Unavailable").arg(channel);
+        else
+            text = QStringLiteral("CH%1 SDI Info | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 | %10 | ErrorCount=%11")
+                       .arg(channel)
+                       .arg(QString::fromUtf8(info.signal_lock_name))
+                       .arg(QString::fromUtf8(info.mode_name))
+                       .arg(QString::fromUtf8(info.resolution_name))
+                       .arg(QString::fromUtf8(info.fps_name))
+                       .arg(QString::fromUtf8(info.scan_name))
+                       .arg(QString::fromUtf8(info.st352_format_name))
+                       .arg(QString::fromUtf8(info.st352_fps_name))
+                       .arg(QString::fromUtf8(info.st352_chroma_name))
+                       .arg(QString::fromUtf8(info.st352_bit_depth_name))
+                       .arg(info.error_count);
+    }
+
+    runtime.cachedInputInfoText = text;
+    QStringList lines;
+    for (const ChannelRuntime &input : channels_)
+    {
+        if (!input.cachedInputInfoText.isEmpty())
+            lines << input.cachedInputInfoText;
+    }
+    if (!chipVersionText_.isEmpty())
+        lines << chipVersionText_;
+    text = lines.join(QLatin1Char('\n'));
+    if (lastInputInfoText_ == text)
         return;
-    runtime.cachedSdiInfoText = text;
-    if (channel == GVFG_CHANNEL_0)
-        emit sdiInfoChanged(text);
+    lastInputInfoText_ = text;
+    emit inputInfoChanged(text);
 }
 
 void CaptureController::updateSignalStatus(bool queryHardware)

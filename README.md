@@ -29,7 +29,10 @@ Link against `gvfg.lib` and `gvfg_playback.lib`, and deploy `gvfg.dll` and
 
 The Git repository includes the SDK headers, import libraries, and DLLs. After cloning,
 build the sample as described below; no separate SDK source checkout is required.
-SDK updates must include matching headers, import libraries, and DLLs.
+SDK updates must include matching headers, import libraries, and DLLs. This package
+includes GVFG SDK 3.1.0 with GigabyteLib 1.0.4. Applications upgrading from SDK 2.x
+must rebuild against the supplied headers and import libraries, including the
+updated OSD API described in the API reference.
 
 ## 3. Building
 
@@ -66,7 +69,11 @@ Hiding the preview does not stop video timestamp submissions. A/V mode still req
 both streams. On stop, the sample joins its read workers and stops playback before
 releasing capture resources.
 
-The sample displays basic status, versions, and API errors. Its existing status loop
+The Input Info panel shows HDMI lock, resolution, frame rate, color format, color
+space, and bit depth through `gvfg_get_channel_hdmi_info()`. It displays SDI details
+for SDI inputs and the board's chip version through `gvfg_get_chip_info()`.
+
+The sample displays basic status, versions, and API errors. Its status loop
 passes `connected` from `gvfg_get_channel_signal_status()` to
 `gvfg_playback_set_signal_connected()`. The Playback helper owns the built-in
 NO SIGNAL card; the sample does not need image assets or card rendering code.

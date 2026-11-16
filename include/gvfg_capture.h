@@ -179,6 +179,26 @@ extern "C"
 
     typedef struct
     {
+        int connected;
+        uint32_t width;
+        uint32_t height;
+        uint32_t fps; /* HDMI input frames per second reported by GigabyteLib. */
+        uint32_t color_format; /* HDMI color format code. */
+        uint32_t color_space; /* HDMI color space and range code. */
+        uint32_t bit_depth; /* HDMI input bit depth. */
+        char fps_name[24]; /* Decimal text for fps, without a unit suffix. */
+        char color_format_name[24];
+        char color_space_name[32];
+    } gvfg_hdmi_info_t;
+
+    typedef struct
+    {
+        uint32_t version_date; /* Chip version date, interpreted in hexadecimal. */
+        uint32_t version_time; /* Chip version time, interpreted in hexadecimal. */
+    } gvfg_chip_info_t;
+
+    typedef struct
+    {
         int connected;    /* Non-zero while this channel has a valid input signal. */
         int channel;      /* gvfg_channel_t selected when the device was opened. */
         int width;        /* Signal width in pixels when connected. */
@@ -207,21 +227,33 @@ extern "C"
         uint64_t timestamp_ns; /* Monotonic SDK delivery time; same clock domain as audio. */
     } gvfg_frame_t;
 
-    /*
-     * Text overlay applied by the SDK to subsequently delivered video frames.
-     * The text is copied by gvfg_set_channel_osd(); the caller does not need to
-     * keep the pointer alive after that function returns.
-     */
-    typedef struct
+    /* Strings are copied synchronously by gvfg_set_channel_osd(). */
+    typedef struct gvfg_channel_osd_config_t
     {
-        const char *text;       /* Printable English ASCII text (0x20-0x7e). */
-        uint32_t text_length;   /* 1 through GVFG_OSD_MAX_TEXT_CHARACTERS. */
-        int32_t x;              /* Measured text-box left in frame pixels; clamped to fit. */
-        int32_t y;              /* Measured text-box top in frame pixels; clamped to fit. */
-        uint32_t font_size_px;  /* Font size in pixels; must be non-zero. */
-        uint32_t color_rgb;     /* 0x00RRGGBB. */
+        const char *text;        /* NUL-terminated printable ASCII, 1..32 characters. */
+        const char *font_family; /* NUL-terminated UTF-8 installed font family name. */
+        uint32_t font_size_px;   /* Non-zero em size; 96-DPI rendering, not ink height. */
+        uint32_t color_rgb;      /* 0x00RRGGBB. */
+        int32_t x;              /* Text-box left in frame pixels; clamped to fit. */
+        int32_t y;              /* Text-box top in frame pixels; clamped to fit. */
     } gvfg_channel_osd_config_t;
 
+    typedef struct gvfg_osd_font_list_t
+    {
+        uint32_t count;
+        const char *const *names; /* SDK-owned UTF-8 family names; do not modify/free. */
+    } gvfg_osd_font_list_t;
+
+    typedef struct gvfg_osd_bitmap_t
+    {
+        const uint8_t *data; /* SDK-owned; do not modify/free. See the render function's lifetime. */
+        uint64_t data_size;  /* stride * height bytes. */
+        uint32_t width;
+        uint32_t height;
+        uint32_t stride;     /* Byte distance between rows; width * 4. */
+    } gvfg_osd_bitmap_t;
+
+#define GVFG_OSD_SLOT_COUNT 2u
 #define GVFG_OSD_MAX_TEXT_CHARACTERS 32u
 
     typedef struct
@@ -368,40 +400,68 @@ extern "C"
         GVFG_PARAM_IN int channel_index,
         GVFG_PARAM_IN gvfg_pixel_format_t format);
 
-    /*
-     * Measure printable ASCII text as a single non-wrapping line, using the
-     * same font/layout as SDK OSD. No capture handle or open device is needed.
-     * Returns a conservative whole-text box in pixels, including glyph
-     * overhang and a one-pixel guard per edge; these are not pixel-tight bounds.
-     * Both outputs must be non-NULL and are zeroed on failure.
-     * Returns GVFG_EINVAL for invalid input or unrepresentable dimensions,
-     * and GVFG_EIO on measurement failure.
+    /* Refresh installed fonts and return an SDK-owned snapshot. No device needed.
+     * Pointers expire at the next call (including a failed call), or DLL unload.
+     * Copy names before then. Serialize calls and use of this borrowed list.
+     * Returns an empty list on failure; no callback or caller-side free is needed.
+     */
+    GVFG_API gvfg_status_t gvfg_get_osd_fonts(
+        GVFG_PARAM_OUT gvfg_osd_font_list_t *out_list);
+
+    /* Measure the same conservative text box used for rendering, including
+     * overhang and a one-pixel guard per edge. Ignores x/y/color; no device needed.
+     * Outputs are zeroed on failure. Missing font/invalid input: GVFG_EINVAL.
      */
     GVFG_API gvfg_status_t gvfg_measure_osd_text(
-        GVFG_PARAM_IN const char *text,
-        GVFG_PARAM_IN uint32_t text_length,
-        GVFG_PARAM_IN uint32_t font_size_px,
+        GVFG_PARAM_IN const gvfg_channel_osd_config_t *config,
         GVFG_PARAM_OUT uint32_t *out_width,
         GVFG_PARAM_OUT uint32_t *out_height);
 
-    /*
-     * Enable or update SDK-side OSD for an opened channel. The configuration
-     * is copied synchronously and applies to subsequent YUY2 or Y210 frames.
-     * Text is rendered as BT.709 limited-range video and blended by the GPU.
-     * The single-line measured text box is positioned at x/y, clamped inside
-     * each frame. If the whole box is larger than the frame, OSD is temporarily
-     * skipped while capture continues. It resumes when settings or frame size
-     * change so that the text fits; text is not wrapped, shrunk, or truncated.
+    /* Prepare one transparent video-sized overlay for FPGA transfer. No capture
+     * handle needed; pass the target video width/height in pixels. Output is
+     * top-down BGRA8888, premultiplied alpha, stride = width * 4.
+     * NULL slots are omitted (hidden/unused); both NULL produce a blank frame.
+     * x/y are frame coordinates, clamped to fit; oversized text is skipped.
+     * Slot 1 is composited over slot 0. No video pixels are included.
+     * Data is valid until the next call to this function on the same thread
+     * (including failure), thread exit or DLL unload. Copy for async transfer.
+     * Invalid inputs/dimensions (including byte size above UINT32_MAX) return
+     * GVFG_EINVAL; allocation/render failures return GVFG_EIO. On failure the
+     * output is empty. Does not affect GPU capture OSD.
+     */
+    GVFG_API gvfg_status_t gvfg_render_osd_frame_bgra(
+        GVFG_PARAM_IN uint32_t video_width,
+        GVFG_PARAM_IN uint32_t video_height,
+        GVFG_PARAM_IN const gvfg_channel_osd_config_t *slot0,
+        GVFG_PARAM_IN const gvfg_channel_osd_config_t *slot1,
+        GVFG_PARAM_OUT gvfg_osd_bitmap_t *out_bitmap);
+
+    /* Set and show slot 0 or 1 on an opened channel. Strings are copied before
+     * return; slot 1 is blended over slot 0. Applies to subsequent YUY2/Y210
+     * frames using BT.709 limited range. X/Y are clamped to fit the text box.
+     * An oversized slot is skipped until settings/frame size allow it to fit;
+     * capture and the other slot continue. No wrapping/shrinking/truncation.
      */
     GVFG_API gvfg_status_t gvfg_set_channel_osd(
         GVFG_PARAM_IN gvfg_handle handle,
         GVFG_PARAM_IN int channel_index,
+        GVFG_PARAM_IN uint32_t osd_index,
         GVFG_PARAM_IN const gvfg_channel_osd_config_t *config);
 
-    /* Disable SDK-side OSD for subsequently delivered frames. */
+    /* visible must be 0 or 1. Retains settings and cached glyph surfaces.
+     * Showing an unconfigured/cleared slot returns GVFG_ESTATE.
+     */
+    GVFG_API gvfg_status_t gvfg_set_channel_osd_visible(
+        GVFG_PARAM_IN gvfg_handle handle,
+        GVFG_PARAM_IN int channel_index,
+        GVFG_PARAM_IN uint32_t osd_index,
+        GVFG_PARAM_IN int visible);
+
+    /* Disable one slot and discard its settings and cached glyph surfaces. */
     GVFG_API gvfg_status_t gvfg_clear_channel_osd(
         GVFG_PARAM_IN gvfg_handle handle,
-        GVFG_PARAM_IN int channel_index);
+        GVFG_PARAM_IN int channel_index,
+        GVFG_PARAM_IN uint32_t osd_index);
 
     /*
      * Enable or disable audio for the next channel start. Video remains
@@ -622,6 +682,15 @@ extern "C"
         GVFG_PARAM_IN gvfg_handle handle,
         GVFG_PARAM_IN int channel_index,
         GVFG_PARAM_OUT gvfg_sdi_info_t *out_info);
+
+    GVFG_API gvfg_status_t gvfg_get_channel_hdmi_info(
+        GVFG_PARAM_IN gvfg_handle handle,
+        GVFG_PARAM_IN int channel_index,
+        GVFG_PARAM_OUT gvfg_hdmi_info_t *out_info);
+
+    GVFG_API gvfg_status_t gvfg_get_chip_info(
+        GVFG_PARAM_IN gvfg_handle handle,
+        GVFG_PARAM_OUT gvfg_chip_info_t *out_info);
 
     /*
      * Query runtime frame-delivery diagnostics.
