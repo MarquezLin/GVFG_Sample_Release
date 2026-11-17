@@ -5,6 +5,7 @@
 #include <gvfg_capture.h>
 #include <gvfg_playback.h>
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QStringList>
 
@@ -77,6 +78,9 @@ private:
         Playback playback;
         bool audioEnabled = false;
         gvfg_audio_format_t audioFormat{};
+        QElapsedTimer audioFpsTimer;
+        uint64_t audioFpsStartFrames = 0;
+        QString audioFpsText;
         std::atomic<uint64_t> videoReceived{0}, videoFailed{0};
         uint64_t lastLoggedPreviewFailures = 0;
         uint64_t lastLoggedAudioReleaseFailures = 0, lastLoggedAudioOutputFailures = 0;

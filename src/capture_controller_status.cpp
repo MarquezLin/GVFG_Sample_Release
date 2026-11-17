@@ -173,11 +173,25 @@ void CaptureController::updateSignalStatus(bool queryHardware)
         if (channel.audioEnabled)
         {
             const Playback::Statistics audioStats = channel.playback.statistics();
-            statusLines << QStringLiteral("CH%1 Audio | %2 Hz %3 ch %4-bit | received=%5 frames")
+            QString audioFps = QStringLiteral("--");
+            if (channel.running.load(std::memory_order_acquire))
+            {
+                const qint64 elapsedMs = channel.audioFpsTimer.elapsed();
+                if (elapsedMs >= 1000)
+                {
+                    const uint64_t frames = audioStats.receivedFrames - channel.audioFpsStartFrames;
+                    channel.audioFpsText = QString::number(1000.0 * frames / elapsedMs, 'f', 2);
+                    channel.audioFpsStartFrames = audioStats.receivedFrames;
+                    channel.audioFpsTimer.restart();
+                }
+                audioFps = channel.audioFpsText;
+            }
+            statusLines << QStringLiteral("CH%1 Audio | %2 Hz %3 ch %4-bit | %5 FPS | received=%6 frames")
                                .arg(channelIndex)
                                .arg(channel.audioFormat.sample_rate)
                                .arg(channel.audioFormat.channels)
                                .arg(channel.audioFormat.bits_per_sample)
+                               .arg(audioFps)
                                .arg(static_cast<qulonglong>(audioStats.receivedFrames));
         }
         statusLines << QStringLiteral("CH%1 Preview | %2 FPS | %3")

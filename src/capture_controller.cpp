@@ -438,6 +438,9 @@ void CaptureController::startCapture(int channelIndex)
                                         { captureReadLoop(channelIndex); });
     if (audioEnabled)
     {
+        channel.audioFpsStartFrames = 0;
+        channel.audioFpsText = QStringLiteral("--");
+        channel.audioFpsTimer.start();
         channel.audioThread = std::thread([this, channelIndex]()
                                           { audioReadLoop(channelIndex); });
     }
