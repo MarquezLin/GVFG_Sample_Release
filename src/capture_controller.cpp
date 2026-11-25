@@ -15,6 +15,7 @@
 namespace
 {
     constexpr int kRuntimeStatusIntervalMs = 200;
+    constexpr int kInputInfoIntervalMs = 10000;
     constexpr uint32_t kFrameReadTimeoutMs = 200;
 
     QString eventTypeText(gvfg_event_type_t type)
@@ -42,6 +43,9 @@ CaptureController::CaptureController(QObject *parent) : QObject(parent)
         processPendingEvents();
         updateSignalStatus(false);
     });
+    inputInfoTimer_ = new QTimer(this);
+    inputInfoTimer_->setInterval(kInputInfoIntervalMs);
+    connect(inputInfoTimer_, &QTimer::timeout, this, [this] { refreshInputInfo(); });
 }
 
 CaptureController::~CaptureController()
@@ -165,6 +169,7 @@ bool CaptureController::openDevice()
     lastSignalStatusText_.clear();
     appendLog(QStringLiteral("Created device session for index %1").arg(selectedDeviceIndex_));
     runtimeStatusTimer_->start();
+    inputInfoTimer_->start();
     updateSignalStatus(false);
     emit stateChanged();
     return true;
@@ -283,6 +288,8 @@ void CaptureController::closeDeviceSession(bool clearSelection)
     if (runtimeStatusTimer_)
         runtimeStatusTimer_->stop();
 
+    inputInfoTimer_->stop();
+    joinInputInfoThread();
     stopAllCaptures();
     for (ChannelRuntime &channel : channels_)
     {
@@ -308,6 +315,7 @@ void CaptureController::closeDeviceSession(bool clearSelection)
     for (ChannelRuntime &channel : channels_)
     {
         channel.opened = false;
+        channel.inputInfoInterface = -1;
         channel.cachedInputInfoText.clear();
         if (clearSelection)
         {
@@ -377,7 +385,7 @@ void CaptureController::startCapture(int channelIndex)
         if (st == GVFG_ETIMEOUT)
         {
             updateSignalStatus();
-            refreshInputInfo(channelIndex);
+            publishInputInfo();
         }
         emit previewCloseRequested(channelIndex);
         emit stateChanged();
@@ -388,7 +396,6 @@ void CaptureController::startCapture(int channelIndex)
     // 5. Refresh the detected input information and prepare the preview target.
     // If preview setup fails, stop the SDK channel before returning.
     updateSignalStatus();
-    refreshInputInfo(channelIndex);
 
     channel.frameAvailable.store(false, std::memory_order_release);
     if (channel.haveCachedSignalStatus &&
@@ -401,7 +408,11 @@ void CaptureController::startCapture(int channelIndex)
     emit previewShowRequested(channelIndex);
     if (!applyPreview(channelIndex))
     {
+        joinInputInfoThread();
         const gvfg_status_t stopStatus = gvfg_stop_channel(handle_, channelIndex);
+        channel.inputInfoInterface = -1;
+        channel.cachedInputInfoText.clear();
+        publishInputInfo();
         if (stopStatus != GVFG_OK)
             reportError(QStringLiteral("gvfg_stop_channel"), stopStatus, channelIndex);
         emit previewCloseRequested(channelIndex);
@@ -414,6 +425,9 @@ void CaptureController::startCapture(int channelIndex)
     channel.audioEnabled = audioEnabled;
     channel.videoReceived = 0;
     channel.videoFailed = 0;
+    channel.videoFpsStartFrames = 0;
+    channel.videoFpsText = QStringLiteral("--");
+    channel.videoFpsTimer.start();
     channel.lastLoggedPreviewFailures = 0;
     channel.lastLoggedAudioReleaseFailures = channel.lastLoggedAudioOutputFailures = 0;
     channel.lastDeliveryLogMs = 0;
@@ -453,6 +467,8 @@ void CaptureController::startCapture(int channelIndex)
                         .arg(channel.audioFormat.bits_per_sample)
                   : QStringLiteral("CH%1 Started video-only").arg(channelIndex));
     updateSignalStatus(false);
+    publishInputInfo();
+    refreshInputInfo();
 }
 
 void CaptureController::stopCapture(int channelIndex)
@@ -469,7 +485,11 @@ void CaptureController::stopCapture(int channelIndex)
         joinCaptureThread(channelIndex);
         joinAudioThread(channelIndex);
         logDeliveryStatus(channelIndex, true);
+        joinInputInfoThread();
         const gvfg_status_t stopStatus = gvfg_stop_channel(handle_, channelIndex);
+        channel.inputInfoInterface = -1;
+        channel.cachedInputInfoText.clear();
+        publishInputInfo();
         if (stopStatus != GVFG_OK)
             reportError(QStringLiteral("gvfg_stop_channel"), stopStatus, channelIndex);
         channel.running.store(false, std::memory_order_release);
@@ -514,13 +534,14 @@ void CaptureController::processPendingEvents()
     if (handle_ == nullptr)
         return;
 
+    bool refreshInfo = false;
     for (int channel = GVFG_CHANNEL_0; channel <= GVFG_CHANNEL_1; ++channel)
     {
         if (!channels_[channel].opened)
             continue;
         gvfg_event_type_t eventType = GVFG_EVENT_UNKNOWN;
         // A zero timeout makes polling non-blocking. Drain every queued event,
-        // then query signal and input information again when the input state has changed.
+        // then refresh the signal state when the input has changed.
         while (gvfg_poll_channel_event(handle_, channel, &eventType, 0) == GVFG_OK)
         {
             appendLog(QStringLiteral("CH%1 [SDK] Event | %2").arg(channel).arg(eventTypeText(eventType)));
@@ -532,8 +553,8 @@ void CaptureController::processPendingEvents()
             if (signalChanged)
             {
                 updateSignalStatus();
-                refreshInputInfo(channel);
                 channels_[channel].playback.resetTimeline();
+                refreshInfo = true;
             }
 
 
@@ -541,6 +562,8 @@ void CaptureController::processPendingEvents()
         }
     }
 
+    if (refreshInfo)
+        refreshInputInfo(true);
 }
 
 void CaptureController::captureReadLoop(int channelIndex)

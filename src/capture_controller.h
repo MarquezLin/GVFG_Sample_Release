@@ -82,12 +82,16 @@ private:
         uint64_t audioFpsStartFrames = 0;
         QString audioFpsText;
         std::atomic<uint64_t> videoReceived{0}, videoFailed{0};
+        QElapsedTimer videoFpsTimer;
+        uint64_t videoFpsStartFrames = 0;
+        QString videoFpsText;
         uint64_t lastLoggedPreviewFailures = 0;
         uint64_t lastLoggedAudioReleaseFailures = 0, lastLoggedAudioOutputFailures = 0;
         qint64 lastDeliveryLogMs = 0;
         uint64_t previewFailureCount = 0;
         gvfg_signal_status_t cachedSignalStatus{};
         bool haveCachedSignalStatus = false;
+        int inputInfoInterface = -1;
         QString cachedInputInfoText;
         QString lastLoggedInputStatus;
     };
@@ -96,7 +100,9 @@ private:
     void appendLog(const QString &message);
     void postLog(const QString &message);
     bool openChannel(int channel);
-    void refreshInputInfo(int channel);
+    void refreshInputInfo(bool refreshAfterPending = false);
+    void publishInputInfo();
+    void joinInputInfoThread();
     void captureReadLoop(int channel);
     void audioReadLoop(int channel);
     void joinCaptureThread(int channel);
@@ -112,6 +118,10 @@ private:
     std::array<ChannelRuntime, 2> channels_{};
     std::array<bool, 2> channelStatusVisible_{{true, true}};
     QTimer *runtimeStatusTimer_ = nullptr;
+    QTimer *inputInfoTimer_ = nullptr;
+    std::thread inputInfoThread_;
+    uint64_t inputInfoRequest_ = 0;
+    bool inputInfoRefreshPending_ = false;
     QString lastSignalStatusText_;
     bool closingDevice_ = false;
 };

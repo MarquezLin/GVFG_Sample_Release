@@ -193,6 +193,17 @@ extern "C"
 
     typedef struct
     {
+        int connected; /* HDMI audio signal lock. */
+        uint32_t sample_frequency; /* HDMI audio sample-frequency code. */
+        uint32_t bits_per_sample;
+        uint32_t channels;
+        uint32_t format; /* HDMI audio format code. */
+        char sample_frequency_name[24];
+        char format_name[24];
+    } gvfg_hdmi_audio_info_t;
+
+    typedef struct
+    {
         uint32_t version_date; /* Chip version date, interpreted in hexadecimal. */
         uint32_t version_time; /* Chip version time, interpreted in hexadecimal. */
     } gvfg_chip_info_t;
@@ -687,6 +698,11 @@ extern "C"
         GVFG_PARAM_IN gvfg_handle handle,
         GVFG_PARAM_IN int channel_index,
         GVFG_PARAM_OUT gvfg_hdmi_info_t *out_info);
+
+    GVFG_API gvfg_status_t gvfg_get_channel_hdmi_audio_info(
+        GVFG_PARAM_IN gvfg_handle handle,
+        GVFG_PARAM_IN int channel_index,
+        GVFG_PARAM_OUT gvfg_hdmi_audio_info_t *out_info);
 
     GVFG_API gvfg_status_t gvfg_get_chip_info(
         GVFG_PARAM_IN gvfg_handle handle,

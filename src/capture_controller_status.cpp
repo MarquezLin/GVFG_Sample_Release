@@ -11,16 +11,6 @@ namespace
 constexpr qint64 kDeliveryLogIntervalMs = 5000;
 constexpr std::size_t kSdkErrorDetailCapacity = 512;
 
-QString frameText(bool valid, int width, int height, const char *pixelFormat, int bitDepth)
-{
-    if (!valid || width <= 0 || height <= 0)
-        return QStringLiteral("--");
-    const QString format = pixelFormat && pixelFormat[0] != '\0'
-                               ? QString::fromUtf8(pixelFormat) : QStringLiteral("--");
-    const QString bit = bitDepth > 0 ? QString::number(bitDepth) : QStringLiteral("--");
-    return QStringLiteral("%1x%2 %3 %4-bit").arg(width).arg(height).arg(format, bit);
-}
-
 QString signalFrameText(const gvfg_signal_status_t &signal)
 {
     if (!signal.connected)
@@ -39,18 +29,15 @@ QString signalFrameText(const gvfg_signal_status_t &signal)
                                       : QStringLiteral("--");
     return QStringLiteral("%1 %2 %3-bit %4").arg(resolution, format, bit, interfaceName);
 }
-}
 
-void CaptureController::refreshInputInfo(int channel)
+QString queryInputInfo(gvfg_handle handle, int channel, int videoInterface)
 {
-    ChannelRuntime &runtime = channels_[channel];
     QString text = QStringLiteral("CH%1 Input Info: --").arg(channel);
-    if (runtime.haveCachedSignalStatus &&
-        runtime.cachedSignalStatus.video_interface == GVFG_INPUT_INTERFACE_HDMI)
+    if (videoInterface == GVFG_INPUT_INTERFACE_HDMI)
     {
         gvfg_hdmi_info_t info{};
-        text = QStringLiteral("CH%1 HDMI Info").arg(channel);
-        if (gvfg_get_channel_hdmi_info(handle_, channel, &info) != GVFG_OK)
+        text = QStringLiteral("CH%1 HDMI Video Info").arg(channel);
+        if (gvfg_get_channel_hdmi_info(handle, channel, &info) != GVFG_OK)
             text += QStringLiteral(" | Unavailable");
         else if (!info.connected)
             text += QStringLiteral(" | No signal");
@@ -60,12 +47,24 @@ void CaptureController::refreshInputInfo(int channel)
                         .arg(QString::fromUtf8(info.color_format_name),
                              QString::fromUtf8(info.color_space_name))
                         .arg(info.bit_depth);
+
+        gvfg_hdmi_audio_info_t audio{};
+        text += QStringLiteral("\nCH%1 HDMI Audio Info").arg(channel);
+        if (gvfg_get_channel_hdmi_audio_info(handle, channel, &audio) != GVFG_OK)
+            text += QStringLiteral(" | Unavailable");
+        else if (!audio.connected)
+            text += QStringLiteral(" | No signal");
+        else
+            text += QStringLiteral(" | Locked | %1 | %2-bit | %3 ch | %4")
+                        .arg(QString::fromUtf8(audio.sample_frequency_name))
+                        .arg(audio.bits_per_sample)
+                        .arg(audio.channels)
+                        .arg(QString::fromUtf8(audio.format_name));
     }
-    else if (runtime.haveCachedSignalStatus &&
-             runtime.cachedSignalStatus.video_interface == GVFG_INPUT_INTERFACE_SDI)
+    else if (videoInterface == GVFG_INPUT_INTERFACE_SDI)
     {
         gvfg_sdi_info_t info{};
-        if (gvfg_get_channel_sdi_info(handle_, channel, &info) != GVFG_OK)
+        if (gvfg_get_channel_sdi_info(handle, channel, &info) != GVFG_OK)
             text = QStringLiteral("CH%1 SDI Info | Unavailable").arg(channel);
         else
             text = QStringLiteral("CH%1 SDI Info | %2 | %3 | %4 | %5 | %6 | %7 | %8 | %9 | %10 | ErrorCount=%11")
@@ -82,7 +81,66 @@ void CaptureController::refreshInputInfo(int channel)
                        .arg(info.error_count);
     }
 
-    runtime.cachedInputInfoText = text;
+    return text;
+}
+}
+
+void CaptureController::refreshInputInfo(bool refreshAfterPending)
+{
+    if (!handle_ || closingDevice_)
+        return;
+    if (inputInfoThread_.joinable())
+    {
+        inputInfoRefreshPending_ |= refreshAfterPending;
+        return;
+    }
+
+    std::array<int, 2> interfaces{{-1, -1}};
+    for (int channel = GVFG_CHANNEL_0; channel <= GVFG_CHANNEL_1; ++channel)
+    {
+        const ChannelRuntime &runtime = channels_[channel];
+        if (runtime.running.load(std::memory_order_acquire))
+            interfaces[channel] = runtime.inputInfoInterface;
+    }
+    if (interfaces[0] < 0 && interfaces[1] < 0)
+        return;
+
+    const uint64_t request = ++inputInfoRequest_;
+    const gvfg_handle handle = handle_;
+    inputInfoThread_ = std::thread([this, handle, interfaces, request] {
+        std::array<QString, 2> results;
+        for (int channel = GVFG_CHANNEL_0; channel <= GVFG_CHANNEL_1; ++channel)
+        {
+            if (interfaces[channel] >= 0)
+                results[channel] = queryInputInfo(handle, channel, interfaces[channel]);
+        }
+        QMetaObject::invokeMethod(this, [this, request, results] {
+            if (request != inputInfoRequest_)
+                return;
+            const bool refreshPending = inputInfoRefreshPending_;
+            joinInputInfoThread();
+            for (int channel = GVFG_CHANNEL_0; channel <= GVFG_CHANNEL_1; ++channel)
+            {
+                if (!results[channel].isEmpty())
+                    channels_[channel].cachedInputInfoText = results[channel];
+            }
+            publishInputInfo();
+            if (refreshPending)
+                refreshInputInfo();
+        }, Qt::QueuedConnection);
+    });
+}
+
+void CaptureController::joinInputInfoThread()
+{
+    ++inputInfoRequest_;
+    inputInfoRefreshPending_ = false;
+    if (inputInfoThread_.joinable())
+        inputInfoThread_.join();
+}
+
+void CaptureController::publishInputInfo()
+{
     QStringList lines;
     for (const ChannelRuntime &input : channels_)
     {
@@ -91,7 +149,7 @@ void CaptureController::refreshInputInfo(int channel)
     }
     if (!chipVersionText_.isEmpty())
         lines << chipVersionText_;
-    text = lines.join(QLatin1Char('\n'));
+    const QString text = lines.isEmpty() ? QStringLiteral("Input Info: --") : lines.join(QLatin1Char('\n'));
     if (lastInputInfoText_ == text)
         return;
     lastInputInfoText_ = text;
@@ -124,6 +182,8 @@ void CaptureController::updateSignalStatus(bool queryHardware)
             {
                 channel.cachedSignalStatus = signal;
                 channel.haveCachedSignalStatus = true;
+                if (signal.connected)
+                    channel.inputInfoInterface = signal.video_interface;
             }
         }
         if (!channel.haveCachedSignalStatus)
@@ -149,27 +209,30 @@ void CaptureController::updateSignalStatus(bool queryHardware)
         if (channel.previewVisible.load(std::memory_order_acquire) && signal.width > 0 && signal.height > 0)
             emit previewSourceSizeChanged(channelIndex, signal.width, signal.height);
 
-        gvfg_preview_info_t previewInfo{};
-        const bool previewInfoOk = channel.playback.previewInfo(&previewInfo) == GVFG_PLAYBACK_OK &&
-            previewInfo.active;
-        gvfg_preview_stats_t previewStats{};
-        const bool previewStatsOk = channel.playback.previewStats(&previewStats) == GVFG_PLAYBACK_OK;
-        const QString previewFps = previewStatsOk && previewStats.present_fps > 0.0
-                                       ? QString::number(previewStats.present_fps, 'f', 2)
-                                       : QStringLiteral("--");
-        const QString previewFrame = previewInfoOk
-                                         ? frameText(true, previewInfo.width, previewInfo.height,
-                                                     previewInfo.pixel_format, previewInfo.bit_depth)
-                                         : QStringLiteral("--");
         statusLines << QStringLiteral("CH%1 | %2 | %3 | %4")
                            .arg(QString::number(channelIndex),
                                 channel.running.load(std::memory_order_acquire)
                                     ? QStringLiteral("Running") : QStringLiteral("Stopped"),
                                 signalFrameText(signal),
                                 channel.zeroCopy ? QStringLiteral("Zero-copy") : QStringLiteral("Copy"));
-        statusLines << QStringLiteral("CH%1 Video | received=%2 frames")
+        const uint64_t videoReceived = channel.videoReceived.load();
+        QString videoFps = QStringLiteral("--");
+        if (channel.running.load(std::memory_order_acquire))
+        {
+            const qint64 elapsedMs = channel.videoFpsTimer.elapsed();
+            if (elapsedMs >= 1000)
+            {
+                const uint64_t frames = videoReceived - channel.videoFpsStartFrames;
+                channel.videoFpsText = QString::number(1000.0 * frames / elapsedMs, 'f', 2);
+                channel.videoFpsStartFrames = videoReceived;
+                channel.videoFpsTimer.restart();
+            }
+            videoFps = channel.videoFpsText;
+        }
+        statusLines << QStringLiteral("CH%1 Video | %2 FPS | received=%3 frames")
                            .arg(channelIndex)
-                           .arg(static_cast<qulonglong>(channel.videoReceived.load()));
+                           .arg(videoFps)
+                           .arg(static_cast<qulonglong>(videoReceived));
         if (channel.audioEnabled)
         {
             const Playback::Statistics audioStats = channel.playback.statistics();
@@ -194,8 +257,6 @@ void CaptureController::updateSignalStatus(bool queryHardware)
                                .arg(audioFps)
                                .arg(static_cast<qulonglong>(audioStats.receivedFrames));
         }
-        statusLines << QStringLiteral("CH%1 Preview | %2 FPS | %3")
-                           .arg(channelIndex).arg(previewFps, previewFrame);
         logDeliveryStatus(channelIndex);
     }
 
